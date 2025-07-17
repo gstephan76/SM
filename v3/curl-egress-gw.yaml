@@ -1,0 +1,25 @@
+apiVersion: networking.istio.io/v1alpha3
+kind: Gateway
+metadata:
+  name: egress-gw
+  namespace: curl # Namespace where the egress gateway is deployed
+spec:
+  selector:
+    istio: egress-gw # Selects the egress-gateway instance to handle this traffic
+  servers:
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - docs.redhat.com # External service host, not a full URL.gw
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: DestinationRule
+metadata:
+  name: egress-dr
+  namespace: curl # Namespace where the egress gateway is deployed
+spec:
+  host: egress-gw.curl.svc.cluster.local
+  subsets:
+    - name: rh-docs

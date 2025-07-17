@@ -1,0 +1,20 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": {
+          "Federated": "arn:aws:iam::${<aws_account_id>}:oidc-provider/${<oidc_provider>}" 
+        },
+        "Action": "sts:AssumeRoleWithWebIdentity",
+        "Condition": {
+          "StringEquals": {
+            "${OIDC_PROVIDER}:sub": [
+              "system:serviceaccount:${<openshift_project_for_tempostack>}:tempo-${<tempostack_cr_name>}" 
+              "system:serviceaccount:${<openshift_project_for_tempostack>}:tempo-${<tempostack_cr_name>}-query-frontend"
+           ]
+         }
+       }
+     }
+    ]
+}

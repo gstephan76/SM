@@ -1,0 +1,31 @@
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: egress-vs
+  namespace: curl # Namespace where the curl pod is running
+spec:
+  hosts:
+    - docs.redhat.com # External service host, not a full URL.
+  gateways:
+    - mesh
+    - curl/egress-gw # Egress gateway name defined in the file that you used in the previous step.
+  http:
+    - match:
+        - gateways:
+            - mesh
+          port: 80
+      route:
+        - destination:
+            host: egress-gw.curl.svc.cluster.local
+            subset: rh-docs
+            port:
+              number: 80
+          weight: 100
+    - match:
+        - gateways:
+            - curl/egress-gw # Egress gateway name defined in the file that you used in the previous step.
+        - destination:
+            host: docs.redhat.com
+            port:
+              number: 80
+          weight: 100

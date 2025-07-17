@@ -1,0 +1,10 @@
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: originate-tls-for-edition-cnn-com
+spec:
+  host: edition.cnn.com
+  trafficPolicy:
+    tls:
+      mode: SIMPLE # initiates HTTPS for connections to edition.cnn.com
+      sni: edition.cnn.com

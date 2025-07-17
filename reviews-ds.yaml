@@ -1,0 +1,29 @@
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"networking.istio.io/v1alpha3","kind":"DestinationRule","metadata":{"annotations":{},"name":"reviews","namespace":"bookinfo"},"spec":{"host":"reviews","subsets":[{"labels":{"version":"v1"},"name":"v1"},{"labels":{"version":"v2"},"name":"v2"},{"labels":{"version":"v3"},"name":"v3"}],"trafficPolicy":{"tls":{"mode":"ISTIO_MUTUAL"}}}}
+  creationTimestamp: "2025-03-27T16:11:54Z"
+  generation: 1
+  name: reviews
+  namespace: bookinfo
+  resourceVersion: "45777"
+  uid: a6e13acf-40e5-4011-a11d-562373677ff6
+spec:
+  host: reviews
+  subsets:
+    - labels:
+        version: v1
+      name: v1
+    - labels:
+        version: v2
+      name: v2
+    - labels:
+        version: v3
+      name: v3
+  trafficPolicy:
+    tls:
+      mode: ISTIO_MUTUAL
+    loadBalancer:
+      simple: LEAST_REQUEST
