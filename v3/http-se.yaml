@@ -1,7 +1,7 @@
 apiVersion: networking.istio.io/v1
 kind: ServiceEntry
 metadata:
-  name: egress-se
+  name: rh-docs
   namespace: curl
 spec:
   hosts:

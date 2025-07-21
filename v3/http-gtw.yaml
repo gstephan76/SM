@@ -5,7 +5,7 @@ metadata:
   namespace: curl # Namespace where the egress gateway is deployed
 spec:
   selector:
-    app: curl # Selects the egress-gateway instance to handle this traffic
+    istio: egress-gw # Selects the egress-gateway instance to handle this traffic
   servers:
     - port:
         number: 80
