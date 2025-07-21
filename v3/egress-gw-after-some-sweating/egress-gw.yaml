@@ -1,0 +1,15 @@
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: egress-gw
+  namespace: curl
+spec:
+  selector:
+    istio: egress-gw
+  servers:
+    - hosts:
+        - docs.redhat.com
+      port:
+        name: http
+        number: 80
+        protocol: HTTP

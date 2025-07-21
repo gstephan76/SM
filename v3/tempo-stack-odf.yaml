@@ -1,0 +1,27 @@
+apiVersion: tempo.grafana.com/v1alpha1
+kind: TempoStack
+metadata:
+  name: sample
+  namespace: tempo
+spec:
+  observability:
+    tracing:
+      jaeger_agent_endpoint: "localhost:6831"
+  tenants:
+    authentication:
+      - tenantId: f78bf974-aee2-47e8-8bb4-9ba41a41824a
+        tenantName: north
+      - tenantId: ac4dd897-40da-4403-9cab-53905e22ef78
+        tenantName: south
+    mode: openshift
+  managementState: Managed
+  template:
+    gateway:
+      enabled: true
+    queryFrontend:
+      jaegerQuery:
+        enabled: true
+  storage:
+    secret:
+      name: tempostack-dev-minio
+      type: s3

@@ -1,0 +1,1 @@
+https://tempo-sample-gateway.tempo.svc.cluster.local:8081/api/traces/v1/north/tempo

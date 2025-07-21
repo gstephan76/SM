@@ -1,0 +1,12 @@
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  annotations:
+  name: egress-dr
+  namespace: curl
+spec:
+  host: egress-gw.curl.svc.cluster.local
+  subsets:
+    - labels:
+        istio: egress-gw
+      name: rh-docs

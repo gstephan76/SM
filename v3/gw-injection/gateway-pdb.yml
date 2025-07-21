@@ -1,0 +1,10 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: egress-gw
+  namespace: curl
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      istio: egress-gw

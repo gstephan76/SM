@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: egress-gw
+  namespace: curl
+spec:
+  type: ClusterIP
+  selector:
+    istio: egress-gw
+  ports:
+    - name: status-port
+      port: 15021
+      protocol: TCP
+      targetPort: 15021
+    - name: http
+      port: 80
+      protocol: TCP
+      targetPort: 80
+    - name: https
+      port: 443
+      protocol: TCP
+      targetPort: 443

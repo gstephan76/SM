@@ -1,0 +1,15 @@
+apiVersion: networking.istio.io/v1
+kind: ServiceEntry
+metadata:
+  annotations:
+  name: rh-docs
+  namespace: curl
+spec:
+  hosts:
+    - docs.redhat.com
+  location: MESH_EXTERNAL
+  ports:
+    - name: http-port
+      number: 80
+      protocol: HTTP
+  resolution: DNS
