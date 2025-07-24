@@ -60,5 +60,5 @@ spec:
           action: replace
           targetLabel: namespace
         - action: replace
-          replacement: "the-mesh-identification-string"
+          replacement: "my-mesh"
           targetLabel: mesh_id

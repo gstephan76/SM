@@ -4,9 +4,26 @@ metadata:
   name: sample
   namespace: tempo
 spec:
+  limits:
+    global:
+      ingestion: {}
+      query:
+        maxSearchDuration: 0s
+  managementState: Managed
   observability:
     tracing:
-      jaeger_agent_endpoint: "localhost:6831"
+      jaeger_agent_endpoint: localhost:6831
+  serviceAccount: tempo-sample
+  storage:
+    secret:
+      name: tempostack-dev-minio
+      type: s3
+  template:
+    gateway:
+      enabled: true
+    queryFrontend:
+      jaegerQuery:
+        enabled: true
   tenants:
     authentication:
       - tenantId: f78bf974-aee2-47e8-8bb4-9ba41a41824a
@@ -14,14 +31,4 @@ spec:
       - tenantId: ac4dd897-40da-4403-9cab-53905e22ef78
         tenantName: south
     mode: openshift
-  managementState: Managed
-  template:
-    gateway:
-      enabled: true
-    queryFrontend:
-      jaegerQuery:
-        enabled: true
-  storage:
-    secret:
-      name: tempostack-dev-minio
-      type: s3
+  timeout: 30s

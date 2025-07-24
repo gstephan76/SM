@@ -1,0 +1,17 @@
+apiVersion: sailoperator.io/v1
+kind: Istio
+  name: default
+spec:
+  namespace: istio-system
+  updateStrategy:
+    inactiveRevisionDeletionGracePeriodSeconds: 30
+    type: InPlace
+  values:
+    meshConfig:
+      enableTracing: true
+      extensionProviders:
+        - name: otel-tracing
+          opentelemetry:
+            port: 4317
+            service: otel-collector.istio-system.svc.cluster.local
+  version: v1.24.6

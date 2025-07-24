@@ -13,6 +13,13 @@ spec:
       log_level: info
     view_only_mode: false
   external_services:
+    prometheus:
+      auth:
+        type: bearer
+        use_kiali_token: true
+      thanos_proxy:
+        enabled: true
+      url: https://thanos-querier.openshift-monitoring.svc.cluster.local:9091
     grafana:
       enabled: true
       external_url: "https://grafana-istio-system.apps.cluster-xjbz7.xjbz7.sandbox478.opentlc.com"
