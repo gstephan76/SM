@@ -5,10 +5,6 @@ metadata:
   namespace: tempo
 spec:
   limits:
-    global:
-      ingestion: {}
-      query:
-        maxSearchDuration: 0s
   managementState: Managed
   observability:
     tracing:
