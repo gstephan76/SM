@@ -1,0 +1,13 @@
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: reviews-destination
+spec:
+  host: reviews # The service we are configuring
+  subsets:
+    - name: v1 # The name we will use in the VirtualService
+      labels:
+        version: v1 # Selects pods with this label
+    - name: v2 # The name for our canary version
+      labels:
+        version: v2 # Selects pods with this label
