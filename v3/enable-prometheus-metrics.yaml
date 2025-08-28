@@ -1,3 +1,6 @@
+
+# DO NOT install this if one intend to use OTEL
+----
 apiVersion: telemetry.istio.io/v1
 kind: Telemetry
 metadata:
