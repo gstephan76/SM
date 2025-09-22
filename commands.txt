@@ -5,7 +5,7 @@ kubectl label namespace bookinfo istio-injection=enabled --overwrite
 
 kubectl exec "$SOURCE_POD" -c curl -- curl -sS -v httpbin:8000/status/418
 
-# During SMCP creation, enaible:
+# During SMCP creation, enable:
   -> Egress gateway
   -> tracing? Jaeger
   -> sampling 10000

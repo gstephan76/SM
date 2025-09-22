@@ -1,5 +1,6 @@
-apiVersion: sailoperator.io/v1
 kind: Istio
+apiVersion: sailoperator.io/v1
+metadata:
   name: default
 spec:
   namespace: istio-system
@@ -14,4 +15,4 @@ spec:
           opentelemetry:
             port: 4317
             service: otel-collector.istio-system.svc.cluster.local
-  version: v1.24.6
+  version: v1.26.3

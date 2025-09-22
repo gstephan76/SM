@@ -1,0 +1,54 @@
+apiVersion: kiali.io/v1alpha1
+kind: Kiali
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"kiali.io/v1alpha1","kind":"Kiali","metadata":{"annotations":{},"name":"kiali","namespace":"istio-system"},"spec":{"deployment":{"logger":{"log_level":"info"},"view_only_mode":false},"external_services":{"grafana":{"enabled":true,"external_url":"https://grafana-istio-system.apps.cluster-xjbz7.xjbz7.sandbox478.opentlc.com","internal_url":"http://grafana.istio-system.svc.cluster.local:3000"},"prometheus":{"auth":{"insecure_skip_verify":false,"type":"bearer","use_kiali_token":true},"thanos_proxy":{"enabled":true},"url":"https://thanos-querier.openshift-monitoring.svc.cluster.local:9091"},"tracing":{"auth":{"ca_file":"/var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt","insecure_skip_verify":false,"type":"bearer","use_kiali_token":true},"enabled":true,"external_url":"https://tempo-sample-gateway-tempo.apps.cluster-xjbz7.xjbz7.sandbox478.opentlc.com/api/traces/v1/north/search","health_check_url":"https://tempo-sample-gateway.tempo.svc.cluster.local:8080/api/traces/v1/north/tempo/api/echo","internal_url":"https://tempo-sample-gateway.tempo.svc.cluster.local:8080/api/traces/v1/north/tempo","namespace_selector":true,"provider":"tempo","query_timeout":15,"tempo_config":{"datasource_uid":"aercfifi24lj4c","org_id":"1","url_format":"jaeger"},"use_grpc":false}},"istio_namespace":"istio-system","version":"default"}}
+  creationTimestamp: "2025-08-26T18:49:58Z"
+  finalizers:
+    - kiali.io/finalizer
+  generation: 12
+  name: kiali
+  namespace: istio-system
+  resourceVersion: "1011791"
+  uid: f8b2b714-5211-4560-a768-3785e799aed2
+spec:
+  deployment:
+    logger:
+      log_level: info
+    view_only_mode: false
+  external_services:
+    grafana:
+      enabled: true
+      external_url: https://grafana-a-route-openshift-user-workload-monitoring.apps.cluster-bjdpk.bjdpk.sandbox5217.opentlc.com
+      internal_url: http://grafana-a-service.openshift-user-workload-monitoring.svc.cluster.local:3000
+    prometheus:
+      auth:
+        insecure_skip_verify: false
+        type: bearer
+        use_kiali_token: true
+      thanos_proxy:
+        enabled: true
+      url: https://thanos-querier.openshift-monitoring.svc.cluster.local:9091
+    tracing:
+      auth:
+        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
+        insecure_skip_verify: false
+        type: bearer
+        use_kiali_token: true
+      enabled: true
+      external_url: https://tempo-sample-gateway-tempo.apps.cluster-bjdpk.bjdpk.sandbox5217.opentlc.com/api/traces/v1/north/search
+      health_check_url: https://tempo-sample-gateway.tempo.svc.cluster.local:8080/api/traces/v1/north/tempo/api/echo
+      internal_url: https://tempo-sample-gateway.tempo.svc.cluster.local:8080/api/traces/v1/north/tempo
+      namespace_selector: true
+      provider: tempo
+      query_timeout: 15
+      tempo_config:
+        datasource_uid: f78bf974-aee2-47e8-8bb4-9ba41a41824a
+        org_id: "1"
+        url_format: jaeger
+      use_grpc: false
+      use_grpc: true
+      #grpc_port: 9095
+  istio_namespace: istio-system
+  version: default
