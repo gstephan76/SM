@@ -7,6 +7,8 @@ metadata:
 spec:
   config:
     exporters:
+      debug:
+        verbosity: basic
       otlp:
         auth:
           authenticator: bearertokenauth
@@ -33,6 +35,7 @@ spec:
         traces:
           exporters:
             - otlp
+#            - debug
           receivers:
             - otlp
       telemetry:

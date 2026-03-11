@@ -11,7 +11,7 @@ spec:
   external_services:
     grafana:
       enabled: true
-      external_url: https://grafana-istio-system.apps.cluster-xjbz7.xjbz7.sandbox478.opentlc.com
+      external_url: https://grafana-istio-system.apps.cluster-x8s6r.x8s6r.sandbox1476.opentlc.com
       internal_url: http://grafana.istio-system.svc.cluster.local:3000
     prometheus:
       auth:
@@ -28,7 +28,7 @@ spec:
         type: bearer
         use_kiali_token: true
       enabled: true
-      external_url: https://tempo-sample-gateway-tempo.apps.cluster-xjbz7.xjbz7.sandbox478.opentlc.com/api/traces/v1/north/search
+      external_url: https://tempo-sample-gateway-tempo.apps.cluster-x8s6r.x8s6r.sandbox1476.opentlc.com/api/traces/v1/north/search
       health_check_url: https://tempo-sample-gateway.tempo.svc.cluster.local:8080/api/traces/v1/north/tempo/api/echo
       internal_url: https://tempo-sample-gateway.tempo.svc.cluster.local:8080/api/traces/v1/north/tempo
       namespace_selector: true
