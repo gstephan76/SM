@@ -1,0 +1,18 @@
+apiVersion: telemetry.istio.io/v1
+kind: Telemetry
+metadata:
+  name: unified-telemetry
+  namespace: istio-system
+spec:
+  metrics:
+    - providers:
+        - name: prometheus
+      overrides:
+        - tagOverrides:
+            # This is the "Magic Key" for Kiali-Tempo correlation
+            request_label_trace_id:
+              value: "request.headers['x-b3-traceid']"
+  tracing:
+    - providers:
+        - name: otel-tracing
+      randomSamplingPercentage: 100

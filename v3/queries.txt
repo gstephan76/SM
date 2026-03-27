@@ -1,0 +1,24 @@
+sum(
+    container_memory_working_set_bytes{cluster="", namespace="saquedigital-dev-01", container!="", image!=""}
+  * on(namespace,pod)
+    group_left(workload, workload_type) namespace_workload_pod:kube_pod_owner:relabel{cluster="", namespace="saquedigital-dev-01", workload="digitalswitch-withdraw-consult|digitalswitch-withdraw-withdrawtecban|digitalswitch-withdraw-crypto|digitalswitch-withdraw-consult-switch|digitalswitch-withdraw-status-consult", workload_type=~"deployment"}
+) by (pod)
+ 
+ 
+ 
+sum by (pod) (
+  rate(container_cpu_usage_seconds_total{
+    cluster="",
+    namespace="saquedigital-dev-01",
+    container!="",
+    image!=""
+  }[5m])
+  * on(namespace, pod)
+  group_left(workload, workload_type)
+  namespace_workload_pod:kube_pod_owner:relabel{
+    cluster="",
+    namespace="saquedigital-dev-01",
+    workload=~"digitalswitch-withdraw-consult|digitalswitch-withdraw-withdrawtecban|digitalswitch-withdraw-crypto|digitalswitch-withdraw-consult-switch|digitalswitch-withdraw-status-consult",
+    workload_type=~"deployment"
+  }
+)

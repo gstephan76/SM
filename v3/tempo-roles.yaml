@@ -52,3 +52,10 @@ subjects:
   - kind: ServiceAccount
     name: otel-collector
     namespace: istio-system
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: otel-collector
+  namespace: istio-system

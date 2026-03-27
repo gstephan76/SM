@@ -1,0 +1,17 @@
+apiVersion: telemetry.istio.io/v1
+kind: Telemetry
+metadata:
+  name: unified-telemetry
+  namespace: istio-system
+spec:
+  metrics:
+    - overrides:
+        - tagOverrides:
+            request_label_trace_id:
+              value: request.headers['x-b3-traceid']
+      providers:
+        - name: prometheus
+  tracing:
+    - providers:
+        - name: otel-tracing
+      randomSamplingPercentage: 100

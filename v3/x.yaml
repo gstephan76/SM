@@ -1,0 +1,62 @@
+apiVersion: kiali.io/v1alpha1
+kind: Kiali
+metadata:
+  annotations:
+  name: kiali
+  namespace: istio-system
+spec:
+  deployment:
+    cluster_wide_access: true
+    image_digest: ""
+    image_pull_policy: IfNotPresent
+    instance_name: kiali
+    logger:
+      log_format: text
+      log_level: info
+      sampler_rate: "1"
+      time_field_format: 2006-01-02T15:04:05Z07:00
+    remote_cluster_resources_only: false
+    replicas: 1
+    secret_name: kiali
+    view_only_mode: false
+  external_services:
+    grafana:
+      enabled: true
+      external_url: https://grafana-istio-system.apps.cluster-b8sk9.b8sk9.sandbox2802.opentlc.com
+      internal_url: http://grafana.istio-system.svc.cluster.local:3000
+      is_core: false
+    prometheus:
+      auth:
+        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
+        insecure_skip_verify: false
+        type: bearer
+        use_kiali_token: true
+      cache_duration: 7
+      cache_enabled: true
+      cache_expiration: 300
+      is_core: false
+      skip_config_check: true
+      url: https://thanos-querier.openshift-monitoring.svc.cluster.local:9091
+    tracing:
+      auth:
+        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
+        insecure_skip_verify: false
+        type: bearer
+        use_kiali_token: true
+      disable_version_check: false
+      enabled: true
+      external_url: https://tempo-sample-gateway-tempo.apps.cluster-b8sk9.b8sk9.sandbox2802.opentlc.com/api/traces/v1/north/search
+      grpc_port: 9095
+      health_check_url: https://tempo-sample-gateway.tempo.svc.cluster.local:8080/api/traces/v1/north/tempo/api/echo
+      internal_url: https://tempo-sample-gateway.tempo.svc.cluster.local:8080/api/traces/v1/north/tempo
+      is_core: false
+      namespace_selector: false
+      provider: tempo
+      query_timeout: 15
+      tempo_config:
+        cache_capacity: 200
+        cache_enabled: true
+        url_format: openshift
+      use_grpc: false
+  istio_namespace: istio-system
+  version: default

@@ -1,0 +1,108 @@
+apiVersion: kiali.io/v1alpha1
+kind: Kiali
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"kiali.io/v1alpha1","kind":"Kiali","metadata":{"annotations":{},"name":"kiali","namespace":"istio-system"},"spec":{"deployment":{"logger":{"log_level":"info"},"view_only_mode":false},"external_services":{"grafana":{"enabled":true,"external_url":"https://grafana-istio-system.apps.cluster-x8s6r.x8s6r.sandbox1476.opentlc.com","internal_url":"http://grafana.istio-system.svc.cluster.local:3000"},"prometheus":{"auth":{"insecure_skip_verify":false,"type":"bearer","use_kiali_token":true},"thanos_proxy":{"enabled":true},"url":"https://thanos-querier.openshift-monitoring.svc.cluster.local:9091"},"tracing":{"auth":{"ca_file":"/var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt","insecure_skip_verify":false,"type":"bearer","use_kiali_token":true},"enabled":true,"external_url":"https://tempo-sample-gateway-tempo.apps.cluster-x8s6r.x8s6r.sandbox1476.opentlc.com/api/traces/v1/north/search","health_check_url":"https://tempo-sample-gateway.tempo.svc.cluster.local:8080/api/traces/v1/north/tempo/api/echo","internal_url":"https://tempo-sample-gateway.tempo.svc.cluster.local:8080/api/traces/v1/north/tempo","namespace_selector":false,"provider":"tempo","query_timeout":15,"tempo_config":{"url_format":"jaeger"},"use_grpc":false}},"istio_namespace":"istio-system","version":"default"}}
+  creationTimestamp: "2026-03-07T14:04:07Z"
+  finalizers:
+  - kiali.io/finalizer
+  generation: 3
+  name: kiali
+  namespace: istio-system
+  resourceVersion: "180794"
+  uid: 49ec9bc8-9fc9-45d6-be54-b844b8aa9f4e
+spec:
+  deployment:
+    cluster_wide_access: true
+    image_digest: ""
+    image_pull_policy: IfNotPresent
+    instance_name: kiali
+    logger:
+      log_format: text
+      log_level: info
+      sampler_rate: "1"
+      time_field_format: 2006-01-02T15:04:05Z07:00
+    remote_cluster_resources_only: false
+    replicas: 1
+    secret_name: kiali
+    view_only_mode: false
+  external_services:
+    grafana:
+      enabled: true
+      external_url: https://grafana-istio-system.apps.cluster-x8s6r.x8s6r.sandbox1476.opentlc.com
+      internal_url: http://grafana.istio-system.svc.cluster.local:3000
+      is_core: false
+    prometheus:
+      auth:
+        insecure_skip_verify: false
+        type: bearer
+        use_kiali_token: true
+      cache_duration: 7
+      cache_enabled: true
+      cache_expiration: 300
+      is_core: true
+      thanos_proxy:
+        enabled: true
+        retention_period: 7d
+        scrape_interval: 30s
+      url: https://thanos-querier.openshift-monitoring.svc.cluster.local:9091
+    tracing:
+      auth:
+        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
+        insecure_skip_verify: false
+        type: bearer
+        use_kiali_token: true
+      disable_version_check: false
+      enabled: true
+      external_url: https://tempo-sample-gateway-tempo.apps.cluster-x8s6r.x8s6r.sandbox1476.opentlc.com/api/traces/v1/north/search
+      grpc_port: 9095
+      health_check_url: https://tempo-sample-gateway.tempo.svc.cluster.local:8080/api/traces/v1/north/tempo/api/echo
+      internal_url: https://tempo-sample-gateway.tempo.svc.cluster.local:8080/api/traces/v1/north/tempo
+      is_core: false
+      namespace_selector: false
+      provider: tempo
+      query_timeout: 15
+      tempo_config:
+        cache_capacity: 200
+        cache_enabled: true
+        url_format: jaeger
+      use_grpc: false
+  istio_namespace: istio-system
+  version: default
+status:
+  conditions:
+  - ansibleResult:
+      changed: 7
+      completion: "2026-03-07T19:08:42.744704+00:00"
+      failures: 0
+      ok: 89
+      skipped: 61
+    lastTransitionTime: "2026-03-07T14:04:07Z"
+    message: Awaiting next reconciliation
+    reason: Successful
+    status: "True"
+    type: Running
+  - lastTransitionTime: "2026-03-07T19:08:43Z"
+    message: Last reconciliation succeeded
+    reason: Successful
+    status: "True"
+    type: Successful
+  - lastTransitionTime: "2026-03-07T14:04:46Z"
+    message: ""
+    reason: ""
+    status: "False"
+    type: Failure
+  deployment:
+    instanceName: kiali
+    namespace: istio-system
+    remoteClusterResourcesOnly: false
+  environment:
+    isOpenshift: true
+    kubernetesVersion: 1.33.6
+    openshiftVersion: 4.20.15
+    operatorVersion: v2.17.4
+  progress:
+    duration: "0:01:07"
+    message: 7. Finished all resource creation
+  specVersion: default
