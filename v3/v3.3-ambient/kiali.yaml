@@ -1,0 +1,43 @@
+---
+apiGroupVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kiali-monitoring-rbac
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-monitoring-view
+subjects:
+  - kind: ServiceAccount
+    name: kiali-service-account
+    namespace: istio-system
+
+---
+apiVersion: kiali.io/v1alpha1
+kind: Kiali
+metadata:
+  name: kiali-user-workload-monitoring
+  namespace: istio-system
+spec:
+  external_services:
+    prometheus:
+      auth:
+        type: bearer
+        use_kiali_token: true
+      thanos_proxy:
+        enabled: true
+      url: https://thanos-querier.openshift-monitoring.svc.cluster.local:9091
+    tracing:
+      enabled: true
+      provider: tempo
+      use_grpc: false
+      internal_url: https://tempo-sample-gateway.tempo.svc.cluster.local:8080/api/traces/v1/default/tempo
+      external_url: https://tempo-sample-gateway-tempo.apps-crc.testing/api/traces/v1/default/search
+      health_check_url: https://tempo-sample-gateway-tempo.apps-crc.testing/api/traces/v1/default/tempo/api/echo
+      auth:
+        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
+        insecure_skip_verify: false
+        type: bearer
+        use_kiali_token: true
+      tempo_config:
+        url_format: "jaeger"

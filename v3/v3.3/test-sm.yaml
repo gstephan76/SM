@@ -1,0 +1,17 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: istio-proxies-monitor
+  namespace: istio-system
+spec:
+  jobLabel: app
+  selector:
+    matchLabels:
+      security.istio.io/tlsMode: istio # This matches your pods
+  namespaceSelector:
+    any: true
+  podMetricsEndpoints:
+  - path: /stats/prometheus
+    interval: 30s
+    targetPort: 15020 # Scrapes the sidecar directly
+    scheme: http

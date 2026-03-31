@@ -1,0 +1,14 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: istio-proxies-monitor
+  namespace: bookinfo
+spec:
+  selector:
+    matchLabels:
+      app: istio-proxy-metrics # Matches the Service name above
+  endpoints:
+  - port: http-envoy-prom
+    interval: 30s
+    path: /stats/prometheus
+    scheme: http

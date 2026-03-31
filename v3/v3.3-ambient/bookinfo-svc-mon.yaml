@@ -1,0 +1,14 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: waypoint-monitor
+  namespace: bookinfo
+spec:
+  targetLabels:
+    - app
+  selector:
+    matchLabels:
+      service: waypoint
+  endpoints:
+    - port: http-monitoring
+      interval: 30s

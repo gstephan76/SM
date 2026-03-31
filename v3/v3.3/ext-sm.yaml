@@ -1,0 +1,17 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: istio-proxies-monitor
+  namespace: istio-system
+spec:
+  jobLabel: component
+  selector:
+    matchExpressions:
+      - { key: sidecar.istio.io/status, operator: Exists }
+  namespaceSelector:
+    any: true
+  endpoints:
+    - port: http-envoy-prom # This maps to port 15020
+      path: /stats/prometheus
+      interval: 30s
+      scheme: http

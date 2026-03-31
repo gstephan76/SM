@@ -1,0 +1,118 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: bookinfo-gateway
+  namespace: bookinfo
+spec:
+  gatewayClassName: istio
+  listeners:
+  - name: http
+    port: 8080
+    protocol: HTTP
+    allowedRoutes:
+      namespaces:
+        from: Same
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: bookinfo
+  namespace: bookinfo
+spec:
+  parentRefs:
+  - name: bookinfo-gateway
+  rules:
+  - matches:
+    - path: { type: Exact, value: /productpage }
+    - path: { type: PathPrefix, value: /static }
+    - path: { type: Exact, value: /login }
+    - path: { type: Exact, value: /logout }
+    - path: { type: PathPrefix, value: /api/v1/products }
+    backendRefs:
+    - name: productpage
+      port: 9080
+
+
+oc get gateway bookinfo-gateway -n bookinfo -o
+jsonpath='{.status.addresses[0].value}'
+
+oc expose svc/bookinfo-gateway-istio -n bookinfo
+--name=productpage-external
+
+istioctl waypoint apply -n bookinfo --name bookinfo-waypoint
+
+oc label namespace bookinfo istio.io/dataplane-mode=ambient
+
+oc expose svc/bookinfo-gateway-istio -n bookinfo --name=bookinfo-url
+
+oc get gateway bookinfo-gateway -n bookinfo -o
+jsonpath='{.status.addresses[0].value}'
+
+oc get route bookinfo-external -n bookinfo -o jsonpath='{.spec.host}'
+
+#oc patch route bookinfo-external -n bookinfo -p
+ '{"spec":{"port":{"targetPort":8080}}}'
+
+oc describe httproute bookinfo -n bookinfo
+
+oc get pod -l app=productpage -o wide
+# Get the ztunnel pod name for that specific node
+ZTUNNEL_POD=$(oc get pods -n ztunnel -l app=ztunnel --field-selector spec.nodeName=<NODE_NAME> -o name)
+oc logs -n istio-system $ZTUNNEL_POD --tail=10
+
+istioctl proxy-status
+
+oc label service productpage istio.io/use-waypoint=bookinfo-waypoint -n bookinfo
+
+oc label namespace <your-app-namespace> openshift.io/user-monitoring=true
+
+
+# Get the productpage pod IP again
+POD_IP=$(oc get pod -l app=productpage -n bookinfo -o jsonpath='{.items[0].status.podIP}')
+
+# Get the ztunnel pod on that node
+ZTUNNEL_POD=$(oc get pods -n ztunnel -o wide | grep $(oc get pod -l app=productpage -n bookinfo -o jsonpath='{.items[0].spec.nodeName}') | awk '{print $1}')
+
+# Watch for the 'src.workload' in the logs
+oc logs -n ztunnel $ZTUNNEL_POD --tail=10 | grep $POD_IP
+
+# 1. Delete the old one first
+oc delete pod kiali-diag -n istio-system --ignore-not-found
+
+# 2. Run the pod and wait for completion
+oc run kiali-diag --image=registry.access.redhat.com/ubi9/ubi-minimal --restart=Never -n istio-system --overrides='
+{
+  "spec": {
+    "securityContext": { "runAsNonRoot": true, "seccompProfile": { "type": "RuntimeDefault" } },
+    "containers": [{
+      "name": "kiali-diag",
+      "image": "registry.access.redhat.com/ubi9/ubi-minimal",
+      "command": ["/bin/bash", "-c", "curl -sk -H \"Authorization: Bearer '"$KIALI_TOKEN"'\" \"https://thanos-querier.openshift-monitoring.svc.cluster.local:9091/api/v1/query?query=istio_build\""],
+      "securityContext": { "allowPrivilegeEscalation": false, "capabilities": { "drop": ["ALL"] } }
+    }]
+  }
+}'
+
+# 3. Wait for the pod to succeed or fail
+oc wait --for=condition=Ready pod/kiali-diag -n istio-system --timeout=60s
+
+# 4. Check the results
+oc logs kiali-diag -n istio-system
+
+oc exec curl-test -n istio-system -- sh -c 'curl -k -s -H "Authorization: Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" "https://thanos-querier.openshift-monitoring.svc.cluster.local:9091/api/v1/query?query=istio_requests_total"'
+
+oc label namespace istio-system openshift.io/user-monitoring=true
+oc label namespace bookinfo openshift.io/user-monitoring=true
+
+
+oc patch machineset.machine.openshift.io ${CLUSTERNAME}-worker-${ZONENAME} -n openshift-machine-api --type='merge' -p '{"spec":{"deletePolicy":"Newest"}}'
+
+
+openssl s_client -showcerts -connect ldap.jumpcloud.com:636 < /dev/null | sed -ne '/-BEGIN CERTIFICATE-/,/-END CERTIFICATE-/p' > jumpcloud-chain.crt
+
+oc create configmap ca-config-map \                                                                                                                 
+  --from-file=ca.crt=jumpcloud-chain.crt \
+  -n openshift-config \
+  --dry-run=client -o yaml | oc apply -f -
+
+oc run debug-test --image=registry.access.redhat.com/ubi8/ubi -- /bin/bash -c "curl -v https://ldap.jumpcloud.com:636"
