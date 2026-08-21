@@ -1,0 +1,18 @@
+# Apply only in mesh namespaces that enforce restrictive/default-deny ingress.
+# Intentionally has no metadata.namespace; apply with: oc -n <ns> apply -f <file>
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-openshift-monitoring-istio-proxy
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          network.openshift.io/policy-group: monitoring
+    ports:
+    - protocol: TCP
+      port: 15020

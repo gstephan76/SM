@@ -1,0 +1,8 @@
+# Optional. Installs the OpenShift Service Mesh Console plugin through the Kiali Operator.
+apiVersion: kiali.io/v1alpha1
+kind: OSSMConsole
+metadata:
+  name: ossmconsole
+  namespace: openshift-operators
+spec:
+  version: default

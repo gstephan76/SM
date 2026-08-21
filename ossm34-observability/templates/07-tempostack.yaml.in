@@ -1,0 +1,24 @@
+apiVersion: tempo.grafana.com/v1alpha1
+kind: TempoStack
+metadata:
+  name: mesh
+  namespace: tempo
+spec:
+  storage:
+    secret:
+      name: tempo-s3
+      type: s3
+  storageSize: 10Gi
+  tenants:
+    mode: openshift
+    authentication:
+    - tenantName: mesh
+      tenantId: "${TEMPO_TENANT_UUID}"
+  template:
+    gateway:
+      enabled: true
+      rbac:
+        enabled: true
+    queryFrontend:
+      jaegerQuery:
+        enabled: false

@@ -1,0 +1,26 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: tempo-mesh-read
+rules:
+- apiGroups:
+  - tempo.grafana.com
+  resources:
+  - mesh
+  resourceNames:
+  - traces
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: tempo-mesh-read-kiali
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tempo-mesh-read
+subjects:
+- kind: ServiceAccount
+  name: kiali-service-account
+  namespace: istio-system

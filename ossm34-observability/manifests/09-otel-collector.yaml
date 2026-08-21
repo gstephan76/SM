@@ -1,0 +1,47 @@
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: otel
+  namespace: istio-system
+spec:
+  mode: deployment
+  replicas: 1
+  serviceAccount: otel-collector
+  config:
+    extensions:
+      bearertokenauth:
+        filename: /var/run/secrets/kubernetes.io/serviceaccount/token
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 75
+        spike_limit_percentage: 15
+      batch:
+        timeout: 5s
+    exporters:
+      otlp/tempo:
+        endpoint: tempo-mesh-gateway.tempo.svc.cluster.local:8090
+        auth:
+          authenticator: bearertokenauth
+        headers:
+          X-Scope-OrgID: mesh
+        tls:
+          insecure: false
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
+    service:
+      extensions:
+      - bearertokenauth
+      pipelines:
+        traces:
+          receivers:
+          - otlp
+          processors:
+          - memory_limiter
+          - batch
+          exporters:
+          - otlp/tempo
