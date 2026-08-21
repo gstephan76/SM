@@ -1,4 +1,4 @@
-apiVersion: gateway.networking.k8s.io/v1
+tttbbhhhapiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
   name: bookinfo-gateway
@@ -115,3 +115,15 @@ oc create configmap ca-config-map \
   -n openshift-config \
   --dry-run=client -o yaml | oc apply -f -
 
+  ### PROCERGS
+  Reuniao Maximiliano -
+  Priorizacao DR - Ativo passsivo
+
+  apiVersion: v1
+kind: Secret
+metadata:
+  name: alert-retriever-token
+  namespace: <your-namespace>
+  annotations:
+    kubernetes.io/service-account.name: "alert-retriever" # Mus
+type: kubernetes.io/service-account-token

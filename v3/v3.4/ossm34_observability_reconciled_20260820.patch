@@ -1,0 +1,875 @@
+diff --git a/ossm34-observability/.gitignore b/ossm34-observability/.gitignore
+new file mode 100644
+index 0000000..70627e8
+--- /dev/null
++++ b/ossm34-observability/.gitignore
+@@ -0,0 +1,2 @@
++.env
++rendered/
+diff --git a/ossm34-observability/README.md b/ossm34-observability/README.md
+new file mode 100644
+index 0000000..e8daf8e
+--- /dev/null
++++ b/ossm34-observability/README.md
+@@ -0,0 +1,118 @@
++# OpenShift Service Mesh 3.4 observability reference
++
++This directory is an additive, reconciled reference configuration for:
++
++- OpenShift Container Platform 4.22
++- Red Hat OpenShift Service Mesh 3.4.1 / Istio 1.30.3
++- OpenShift user workload monitoring (Prometheus/Thanos)
++- Red Hat build of OpenTelemetry
++- Red Hat OpenShift distributed tracing platform (Tempo)
++- Kiali Operator provided by Red Hat
++
++It intentionally chooses the secured multitenant Tempo path:
++
++    Envoy --OTLP/gRPC:4317--> OTel Collector
++          --OTLP/gRPC:8090 + bearer + X-Scope-OrgID + service CA--> Tempo Gateway
++          --> TempoStack --> S3
++
++Kiali reads metrics from the OpenShift Thanos Querier and traces from the Tempo Gateway
++HTTP API on port 8080.
++
++## Design decisions
++
++1. Exactly one selectorless root `Telemetry` CR is used in `istio-system`.
++2. The Istio `Telemetry` API is `telemetry.istio.io/v1`.
++3. Tempo multitenancy uses `tenants.mode: openshift`.
++4. Tempo Gateway RBAC is enabled.
++5. The OTel service account gets `create` on `tempo.grafana.com/<tenant>/traces`.
++6. The Kiali service account gets `get` on the same tenant and `cluster-monitoring-view`.
++7. OTel exports through the authenticated Tempo Gateway on port 8090, not directly to the distributor.
++8. Kiali uses the internal Tempo Gateway service and validates the OpenShift service CA.
++9. Proxy `PodMonitor` is applied separately in every mesh namespace; no `namespaceSelector.any` shortcut is used.
++10. The trace-only collector has no Target Allocator and no Prometheus receiver.
++
++## Prerequisites
++
++Install the supported Red Hat Operators before applying this directory:
++
++- Red Hat OpenShift Service Mesh 3 Operator, 3.4 channel/version
++- Red Hat build of OpenTelemetry Operator
++- Tempo Operator / Red Hat OpenShift distributed tracing platform
++- Kiali Operator provided by Red Hat
++
++OpenShift user workload monitoring must already be enabled. The scripts deliberately do not overwrite
++`openshift-monitoring/cluster-monitoring-config`, because that ConfigMap may contain unrelated cluster settings.
++
++Check prerequisites:
++
++    ./scripts/check-prereqs.sh
++
++## Configuration
++
++Copy the environment template and edit it:
++
++    cp env.example .env
++    ${EDITOR:-vi} .env
++
++`TEMPO_TENANT_UUID` must remain stable for the lifetime of this TempoStack. Generate it once with:
++
++    uuidgen
++
++Render the two manifests that contain installation-specific values:
++
++    ./scripts/render.sh .env
++
++The renderer creates:
++
++- `rendered/06-tempo-s3-secret.yaml`
++- `rendered/07-tempostack.yaml`
++
++Do not commit the rendered S3 secret.
++
++## Mesh namespaces
++
++Set `MESH_NAMESPACES` in `.env` to a space-separated list, for example:
++
++    MESH_NAMESPACES="bookinfo payments orders"
++
++The apply script labels these namespaces for discovery and sidecar injection and installs the proxy
++`PodMonitor` in each namespace.
++
++## Apply
++
++    ./scripts/apply.sh .env
++
++The script does not install the optional NetworkPolicy or UI plugin manifests automatically.
++
++## Validate
++
++Before changing the cluster:
++
++    ./scripts/validate.sh .env --client
++
++When connected to the target cluster, validate CR schemas using server-side dry-run:
++
++    ./scripts/validate.sh .env --server
++
++After deployment:
++
++    ./scripts/postcheck.sh .env
++
++## Optional resources
++
++`optional/allow-uwm-to-proxies.yaml` is useful only when a mesh namespace has restrictive/default-deny
++ingress NetworkPolicies. Apply it separately in each affected application namespace.
++
++`optional/distributed-tracing-uiplugin.yaml` enables the OpenShift distributed-tracing console plugin only
++when the Cluster Observability Operator and its `UIPlugin` CRD are installed. It is not required for Kiali.
++Users of that console plugin also need Tempo tenant read RBAC according to your access policy; the core
++configuration intentionally grants trace read access only to Kiali and does not grant cluster-wide user access.
++
++`optional/ossm-console.yaml` installs the Service Mesh console plugin through the Kiali Operator. It is also
++not required for the core metrics/traces pipeline.
++
++## Application trace-context propagation
++
++Mesh proxies can create spans, but applications must propagate tracing headers between calls so spans join
++one distributed trace. For W3C propagation, preserve at least `traceparent` and `tracestate`; preserve
++`x-request-id` as well for Istio request correlation.
+diff --git a/ossm34-observability/env.example b/ossm34-observability/env.example
+new file mode 100644
+index 0000000..4a7a2f4
+--- /dev/null
++++ b/ossm34-observability/env.example
+@@ -0,0 +1,14 @@
++# Copy to .env and edit. Shell quoting is allowed.
++
++# Stable Tempo tenant UUID. Generate ONCE with: uuidgen
++TEMPO_TENANT_UUID="00000000-0000-0000-0000-000000000000"
++
++# S3/compatible object store used by Tempo.
++S3_BUCKET="CHANGE_ME"
++S3_ENDPOINT="https://s3.sa-east-1.amazonaws.com"
++S3_ACCESS_KEY_ID="CHANGE_ME"
++S3_ACCESS_KEY_SECRET="CHANGE_ME"
++
++# Existing application namespaces to join the sidecar mesh.
++# istio-system is handled by the scripts automatically.
++MESH_NAMESPACES=""
+diff --git a/ossm34-observability/manifests/00-namespaces.yaml b/ossm34-observability/manifests/00-namespaces.yaml
+new file mode 100644
+index 0000000..9b15b8d
+--- /dev/null
++++ b/ossm34-observability/manifests/00-namespaces.yaml
+@@ -0,0 +1,16 @@
++apiVersion: v1
++kind: Namespace
++metadata:
++  name: istio-cni
++---
++apiVersion: v1
++kind: Namespace
++metadata:
++  name: istio-system
++  labels:
++    istio-discovery: enabled
++---
++apiVersion: v1
++kind: Namespace
++metadata:
++  name: tempo
+diff --git a/ossm34-observability/manifests/01-istio-cni.yaml b/ossm34-observability/manifests/01-istio-cni.yaml
+new file mode 100644
+index 0000000..8685d79
+--- /dev/null
++++ b/ossm34-observability/manifests/01-istio-cni.yaml
+@@ -0,0 +1,7 @@
++apiVersion: sailoperator.io/v1
++kind: IstioCNI
++metadata:
++  name: default
++spec:
++  namespace: istio-cni
++  version: v1.30.3
+diff --git a/ossm34-observability/manifests/02-istio.yaml b/ossm34-observability/manifests/02-istio.yaml
+new file mode 100644
+index 0000000..16a699b
+--- /dev/null
++++ b/ossm34-observability/manifests/02-istio.yaml
+@@ -0,0 +1,21 @@
++apiVersion: sailoperator.io/v1
++kind: Istio
++metadata:
++  name: default
++spec:
++  namespace: istio-system
++  version: v1.30.3
++  updateStrategy:
++    type: InPlace
++    inactiveRevisionDeletionGracePeriodSeconds: 30
++  values:
++    meshConfig:
++      discoverySelectors:
++      - matchLabels:
++          istio-discovery: enabled
++      enableTracing: true
++      extensionProviders:
++      - name: otel-tracing
++        opentelemetry:
++          service: otel-collector.istio-system.svc.cluster.local
++          port: 4317
+diff --git a/ossm34-observability/manifests/03-mesh-telemetry.yaml b/ossm34-observability/manifests/03-mesh-telemetry.yaml
+new file mode 100644
+index 0000000..f7a83b3
+--- /dev/null
++++ b/ossm34-observability/manifests/03-mesh-telemetry.yaml
+@@ -0,0 +1,14 @@
++apiVersion: telemetry.istio.io/v1
++kind: Telemetry
++metadata:
++  name: mesh-observability
++  namespace: istio-system
++spec:
++  metrics:
++  - providers:
++    - name: prometheus
++  tracing:
++  - providers:
++    - name: otel-tracing
++    # Commissioning baseline. Re-size from traffic volume and retention budget.
++    randomSamplingPercentage: 10.0
+diff --git a/ossm34-observability/manifests/04-istiod-servicemonitor.yaml b/ossm34-observability/manifests/04-istiod-servicemonitor.yaml
+new file mode 100644
+index 0000000..68a94cd
+--- /dev/null
++++ b/ossm34-observability/manifests/04-istiod-servicemonitor.yaml
+@@ -0,0 +1,14 @@
++apiVersion: monitoring.coreos.com/v1
++kind: ServiceMonitor
++metadata:
++  name: istiod-monitor
++  namespace: istio-system
++spec:
++  targetLabels:
++  - app
++  selector:
++    matchLabels:
++      istio: pilot
++  endpoints:
++  - port: http-monitoring
++    interval: 30s
+diff --git a/ossm34-observability/manifests/05-istio-proxies-podmonitor.yaml b/ossm34-observability/manifests/05-istio-proxies-podmonitor.yaml
+new file mode 100644
+index 0000000..fc6f015
+--- /dev/null
++++ b/ossm34-observability/manifests/05-istio-proxies-podmonitor.yaml
+@@ -0,0 +1,59 @@
++# Intentionally has no metadata.namespace.
++# Apply this same object separately in every mesh namespace.
++apiVersion: monitoring.coreos.com/v1
++kind: PodMonitor
++metadata:
++  name: istio-proxies-monitor
++spec:
++  selector:
++    matchExpressions:
++    - key: istio-prometheus-ignore
++      operator: DoesNotExist
++  podMetricsEndpoints:
++  - path: /stats/prometheus
++    interval: 30s
++    relabelings:
++    - action: keep
++      sourceLabels: [__meta_kubernetes_pod_container_name]
++      regex: "istio-proxy"
++    - action: keep
++      sourceLabels: [__meta_kubernetes_pod_annotationpresent_prometheus_io_scrape]
++    - action: replace
++      regex: '(\d+);(([A-Fa-f0-9]{1,4}::?){1,7}[A-Fa-f0-9]{1,4})'
++      replacement: '[$2]:$1'
++      sourceLabels:
++      - __meta_kubernetes_pod_annotation_prometheus_io_port
++      - __meta_kubernetes_pod_ip
++      targetLabel: __address__
++    - action: replace
++      regex: '(\d+);((([0-9]+?)(\.|$)){4})'
++      replacement: '$2:$1'
++      sourceLabels:
++      - __meta_kubernetes_pod_annotation_prometheus_io_port
++      - __meta_kubernetes_pod_ip
++      targetLabel: __address__
++    - sourceLabels:
++      - __meta_kubernetes_pod_label_app_kubernetes_io_name
++      - __meta_kubernetes_pod_label_app
++      separator: ';'
++      targetLabel: app
++      action: replace
++      regex: '(.+);.*|.*;(.+)'
++      replacement: '${1}${2}'
++    - sourceLabels:
++      - __meta_kubernetes_pod_label_app_kubernetes_io_version
++      - __meta_kubernetes_pod_label_version
++      separator: ';'
++      targetLabel: version
++      action: replace
++      regex: '(.+);.*|.*;(.+)'
++      replacement: '${1}${2}'
++    - sourceLabels: [__meta_kubernetes_namespace]
++      action: replace
++      targetLabel: namespace
++    - sourceLabels: [__meta_kubernetes_pod_name]
++      action: replace
++      targetLabel: pod_name
++    - action: replace
++      replacement: ossm34-main
++      targetLabel: mesh_id
+diff --git a/ossm34-observability/manifests/08-otel-tempo-write-rbac.yaml b/ossm34-observability/manifests/08-otel-tempo-write-rbac.yaml
+new file mode 100644
+index 0000000..e1bcca0
+--- /dev/null
++++ b/ossm34-observability/manifests/08-otel-tempo-write-rbac.yaml
+@@ -0,0 +1,32 @@
++apiVersion: v1
++kind: ServiceAccount
++metadata:
++  name: otel-collector
++  namespace: istio-system
++---
++apiVersion: rbac.authorization.k8s.io/v1
++kind: ClusterRole
++metadata:
++  name: tempo-mesh-write
++rules:
++- apiGroups:
++  - tempo.grafana.com
++  resources:
++  - mesh
++  resourceNames:
++  - traces
++  verbs:
++  - create
++---
++apiVersion: rbac.authorization.k8s.io/v1
++kind: ClusterRoleBinding
++metadata:
++  name: tempo-mesh-write
++roleRef:
++  apiGroup: rbac.authorization.k8s.io
++  kind: ClusterRole
++  name: tempo-mesh-write
++subjects:
++- kind: ServiceAccount
++  name: otel-collector
++  namespace: istio-system
+diff --git a/ossm34-observability/manifests/09-otel-collector.yaml b/ossm34-observability/manifests/09-otel-collector.yaml
+new file mode 100644
+index 0000000..a52dd53
+--- /dev/null
++++ b/ossm34-observability/manifests/09-otel-collector.yaml
+@@ -0,0 +1,47 @@
++apiVersion: opentelemetry.io/v1beta1
++kind: OpenTelemetryCollector
++metadata:
++  name: otel
++  namespace: istio-system
++spec:
++  mode: deployment
++  replicas: 1
++  serviceAccount: otel-collector
++  config:
++    extensions:
++      bearertokenauth:
++        filename: /var/run/secrets/kubernetes.io/serviceaccount/token
++    receivers:
++      otlp:
++        protocols:
++          grpc:
++            endpoint: 0.0.0.0:4317
++    processors:
++      memory_limiter:
++        check_interval: 1s
++        limit_percentage: 75
++        spike_limit_percentage: 15
++      batch:
++        timeout: 5s
++    exporters:
++      otlp/tempo:
++        endpoint: tempo-mesh-gateway.tempo.svc.cluster.local:8090
++        auth:
++          authenticator: bearertokenauth
++        headers:
++          X-Scope-OrgID: mesh
++        tls:
++          insecure: false
++          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
++    service:
++      extensions:
++      - bearertokenauth
++      pipelines:
++        traces:
++          receivers:
++          - otlp
++          processors:
++          - memory_limiter
++          - batch
++          exporters:
++          - otlp/tempo
+diff --git a/ossm34-observability/manifests/10-kiali-monitoring-rbac.yaml b/ossm34-observability/manifests/10-kiali-monitoring-rbac.yaml
+new file mode 100644
+index 0000000..e78cbca
+--- /dev/null
++++ b/ossm34-observability/manifests/10-kiali-monitoring-rbac.yaml
+@@ -0,0 +1,12 @@
++apiVersion: rbac.authorization.k8s.io/v1
++kind: ClusterRoleBinding
++metadata:
++  name: kiali-monitoring-rbac
++roleRef:
++  apiGroup: rbac.authorization.k8s.io
++  kind: ClusterRole
++  name: cluster-monitoring-view
++subjects:
++- kind: ServiceAccount
++  name: kiali-service-account
++  namespace: istio-system
+diff --git a/ossm34-observability/manifests/11-kiali-tempo-read-rbac.yaml b/ossm34-observability/manifests/11-kiali-tempo-read-rbac.yaml
+new file mode 100644
+index 0000000..25efdc7
+--- /dev/null
++++ b/ossm34-observability/manifests/11-kiali-tempo-read-rbac.yaml
+@@ -0,0 +1,26 @@
++apiVersion: rbac.authorization.k8s.io/v1
++kind: ClusterRole
++metadata:
++  name: tempo-mesh-read
++rules:
++- apiGroups:
++  - tempo.grafana.com
++  resources:
++  - mesh
++  resourceNames:
++  - traces
++  verbs:
++  - get
++---
++apiVersion: rbac.authorization.k8s.io/v1
++kind: ClusterRoleBinding
++metadata:
++  name: tempo-mesh-read-kiali
++roleRef:
++  apiGroup: rbac.authorization.k8s.io
++  kind: ClusterRole
++  name: tempo-mesh-read
++subjects:
++- kind: ServiceAccount
++  name: kiali-service-account
++  namespace: istio-system
+diff --git a/ossm34-observability/manifests/12-kiali.yaml b/ossm34-observability/manifests/12-kiali.yaml
+new file mode 100644
+index 0000000..550f7f5
+--- /dev/null
++++ b/ossm34-observability/manifests/12-kiali.yaml
+@@ -0,0 +1,37 @@
++apiVersion: kiali.io/v1alpha1
++kind: Kiali
++metadata:
++  name: kiali
++  namespace: istio-system
++spec:
++  auth:
++    strategy: openshift
++  deployment:
++    logger:
++      log_level: info
++    replicas: 1
++    view_only_mode: false
++  istio_namespace: istio-system
++  version: default
++  external_services:
++    grafana:
++      enabled: false
++    prometheus:
++      url: https://thanos-querier.openshift-monitoring.svc.cluster.local:9091
++      auth:
++        type: bearer
++        use_kiali_token: true
++        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
++        insecure_skip_verify: false
++      thanos_proxy:
++        enabled: true
++    tracing:
++      enabled: true
++      provider: tempo
++      use_grpc: false
++      internal_url: https://tempo-mesh-gateway.tempo.svc.cluster.local:8080/api/traces/v1/mesh/tempo
++      auth:
++        type: bearer
++        use_kiali_token: true
++        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
++        insecure_skip_verify: false
+diff --git a/ossm34-observability/optional/allow-uwm-to-proxies.yaml b/ossm34-observability/optional/allow-uwm-to-proxies.yaml
+new file mode 100644
+index 0000000..c7e216b
+--- /dev/null
++++ b/ossm34-observability/optional/allow-uwm-to-proxies.yaml
+@@ -0,0 +1,18 @@
++# Apply only in mesh namespaces that enforce restrictive/default-deny ingress.
++# Intentionally has no metadata.namespace; apply with: oc -n <ns> apply -f <file>
++apiVersion: networking.k8s.io/v1
++kind: NetworkPolicy
++metadata:
++  name: allow-openshift-monitoring-istio-proxy
++spec:
++  podSelector: {}
++  policyTypes:
++  - Ingress
++  ingress:
++  - from:
++    - namespaceSelector:
++        matchLabels:
++          network.openshift.io/policy-group: monitoring
++    ports:
++    - protocol: TCP
++      port: 15020
+diff --git a/ossm34-observability/optional/distributed-tracing-uiplugin.yaml b/ossm34-observability/optional/distributed-tracing-uiplugin.yaml
+new file mode 100644
+index 0000000..e37ed11
+--- /dev/null
++++ b/ossm34-observability/optional/distributed-tracing-uiplugin.yaml
+@@ -0,0 +1,7 @@
++# Optional. Requires the Cluster Observability Operator and UIPlugin CRD.
++apiVersion: observability.openshift.io/v1alpha1
++kind: UIPlugin
++metadata:
++  name: distributed-tracing
++spec:
++  type: DistributedTracing
+diff --git a/ossm34-observability/optional/ossm-console.yaml b/ossm34-observability/optional/ossm-console.yaml
+new file mode 100644
+index 0000000..967ba96
+--- /dev/null
++++ b/ossm34-observability/optional/ossm-console.yaml
+@@ -0,0 +1,8 @@
++# Optional. Installs the OpenShift Service Mesh Console plugin through the Kiali Operator.
++apiVersion: kiali.io/v1alpha1
++kind: OSSMConsole
++metadata:
++  name: ossmconsole
++  namespace: openshift-operators
++spec:
++  version: default
+diff --git a/ossm34-observability/scripts/apply.sh b/ossm34-observability/scripts/apply.sh
+new file mode 100755
+index 0000000..12ad808
+--- /dev/null
++++ b/ossm34-observability/scripts/apply.sh
+@@ -0,0 +1,53 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
++ENV_FILE=${1:-"$ROOT/.env"}
++
++"$ROOT/scripts/check-prereqs.sh"
++"$ROOT/scripts/render.sh" "$ENV_FILE"
++
++set -a
++# shellcheck disable=SC1090
++source "$ENV_FILE"
++set +a
++
++M="$ROOT/manifests"
++R="$ROOT/rendered"
++
++oc apply -f "$M/00-namespaces.yaml"
++oc apply -f "$M/01-istio-cni.yaml"
++oc apply -f "$M/02-istio.yaml"
++
++# Monitoring objects can exist before workloads are ready.
++oc apply -f "$M/04-istiod-servicemonitor.yaml"
++oc -n istio-system apply -f "$M/05-istio-proxies-podmonitor.yaml"
++
++for ns in ${MESH_NAMESPACES:-}; do
++  if ! oc get namespace "$ns" >/dev/null 2>&1; then
++    echo "ERROR: mesh namespace does not exist: $ns" >&2
++    exit 1
++  fi
++  oc label namespace "$ns" istio-discovery=enabled istio-injection=enabled --overwrite
++  oc -n "$ns" apply -f "$M/05-istio-proxies-podmonitor.yaml"
++done
++
++# Tempo storage, tenancy and authorization.
++oc apply -f "$R/06-tempo-s3-secret.yaml"
++oc apply -f "$M/08-otel-tempo-write-rbac.yaml"
++oc apply -f "$R/07-tempostack.yaml"
++
++# Trace transport.
++oc apply -f "$M/09-otel-collector.yaml"
++
++# Enable the mesh providers only after their receiver configuration exists.
++oc apply -f "$M/03-mesh-telemetry.yaml"
++
++# Kiali backend permissions and instance.
++oc apply -f "$M/10-kiali-monitoring-rbac.yaml"
++oc apply -f "$M/11-kiali-tempo-read-rbac.yaml"
++oc apply -f "$M/12-kiali.yaml"
++
++echo
++echo "Applied OSSM 3.4 observability resources. Run:"
++echo "  $ROOT/scripts/postcheck.sh $ENV_FILE"
+diff --git a/ossm34-observability/scripts/check-prereqs.sh b/ossm34-observability/scripts/check-prereqs.sh
+new file mode 100755
+index 0000000..93ce8b0
+--- /dev/null
++++ b/ossm34-observability/scripts/check-prereqs.sh
+@@ -0,0 +1,45 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++need() {
++  command -v "$1" >/dev/null 2>&1 || { echo "ERROR: required command not found: $1" >&2; exit 1; }
++}
++need oc
++
++if ! oc whoami >/dev/null 2>&1; then
++  echo "ERROR: oc is not logged in" >&2
++  exit 1
++fi
++
++required_crds=(
++  istios.sailoperator.io
++  istiocnis.sailoperator.io
++  telemetries.telemetry.istio.io
++  servicemonitors.monitoring.coreos.com
++  podmonitors.monitoring.coreos.com
++  opentelemetrycollectors.opentelemetry.io
++  tempostacks.tempo.grafana.com
++  kialis.kiali.io
++)
++
++failed=0
++for crd in "${required_crds[@]}"; do
++  if oc get crd "$crd" >/dev/null 2>&1; then
++    printf 'OK   %s\n' "$crd"
++  else
++    printf 'MISS %s\n' "$crd" >&2
++    failed=1
++  fi
++done
++
++if oc get namespace openshift-user-workload-monitoring >/dev/null 2>&1; then
++  echo "OK   openshift-user-workload-monitoring namespace exists"
++else
++  echo "MISS user workload monitoring does not appear to be enabled" >&2
++  failed=1
++fi
++
++if (( failed != 0 )); then
++  echo "ERROR: prerequisites are incomplete; install/enable them before applying this stack." >&2
++  exit 1
++fi
+diff --git a/ossm34-observability/scripts/postcheck.sh b/ossm34-observability/scripts/postcheck.sh
+new file mode 100755
+index 0000000..abc233c
+--- /dev/null
++++ b/ossm34-observability/scripts/postcheck.sh
+@@ -0,0 +1,45 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
++ENV_FILE=${1:-"$ROOT/.env"}
++
++set -a
++# shellcheck disable=SC1090
++source "$ENV_FILE"
++set +a
++
++printf '\n== Control plane ==\n'
++oc get istio default -o wide || true
++oc get istiocni default -o wide || true
++oc get pods -n istio-system -o wide || true
++
++printf '\n== Monitoring ==\n'
++oc get servicemonitor -n istio-system istiod-monitor || true
++oc get podmonitor -n istio-system istio-proxies-monitor || true
++for ns in ${MESH_NAMESPACES:-}; do
++  oc get podmonitor -n "$ns" istio-proxies-monitor || true
++done
++
++printf '\n== Tempo ==\n'
++oc get tempostack -n tempo mesh -o wide || true
++oc get pods -n tempo -o wide || true
++oc get svc -n tempo tempo-mesh-gateway || true
++
++printf '\n== OpenTelemetry ==\n'
++oc get opentelemetrycollector -n istio-system otel -o wide || true
++oc get pods -n istio-system -l app.kubernetes.io/managed-by=opentelemetry-operator -o wide || true
++oc get svc -n istio-system otel-collector || true
++
++printf '\n== Kiali ==\n'
++oc get kiali -n istio-system kiali || true
++oc get pods -n istio-system -l app.kubernetes.io/name=kiali -o wide || true
++oc get route -n istio-system kiali || true
++
++printf '\n== Tempo RBAC objects ==\n'
++oc get clusterrole tempo-mesh-write tempo-mesh-read || true
++oc get clusterrolebinding tempo-mesh-write tempo-mesh-read-kiali || true
++
++printf '\n== Useful metric query ==\n'
++echo 'In OpenShift Observe -> Metrics, query: istio_requests_total'
++echo 'Generate application traffic before expecting traces or Kiali graph edges.'
+diff --git a/ossm34-observability/scripts/render.sh b/ossm34-observability/scripts/render.sh
+new file mode 100755
+index 0000000..39aadaa
+--- /dev/null
++++ b/ossm34-observability/scripts/render.sh
+@@ -0,0 +1,58 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
++ENV_FILE=${1:-"$ROOT/.env"}
++
++if [[ ! -f "$ENV_FILE" ]]; then
++  echo "ERROR: env file not found: $ENV_FILE" >&2
++  echo "Copy $ROOT/env.example to $ROOT/.env and edit it." >&2
++  exit 1
++fi
++
++set -a
++# shellcheck disable=SC1090
++source "$ENV_FILE"
++set +a
++
++required=(TEMPO_TENANT_UUID S3_BUCKET S3_ENDPOINT S3_ACCESS_KEY_ID S3_ACCESS_KEY_SECRET)
++for key in "${required[@]}"; do
++  if [[ -z "${!key:-}" || "${!key}" == "CHANGE_ME" || "${!key}" == "00000000-0000-0000-0000-000000000000" ]]; then
++    echo "ERROR: $key is not configured in $ENV_FILE" >&2
++    exit 1
++  fi
++done
++
++if [[ ! "$TEMPO_TENANT_UUID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
++  echo "ERROR: TEMPO_TENANT_UUID is not a UUID: $TEMPO_TENANT_UUID" >&2
++  exit 1
++fi
++
++OUT="$ROOT/rendered"
++mkdir -p "$OUT"
++chmod 700 "$OUT"
++
++python3 - "$ROOT" "$OUT" <<'PY'
++import os
++from pathlib import Path
++import sys
++
++root = Path(sys.argv[1])
++out = Path(sys.argv[2])
++keys = ["TEMPO_TENANT_UUID", "S3_BUCKET", "S3_ENDPOINT", "S3_ACCESS_KEY_ID", "S3_ACCESS_KEY_SECRET"]
++values = {k: os.environ[k] for k in keys}
++
++for src_name, dst_name in [
++    ("06-tempo-s3-secret.yaml.in", "06-tempo-s3-secret.yaml"),
++    ("07-tempostack.yaml.in", "07-tempostack.yaml"),
++]:
++    text = (root / "templates" / src_name).read_text()
++    for key, value in values.items():
++        text = text.replace("${" + key + "}", value.replace("\\", "\\\\").replace('"', '\\"'))
++    (out / dst_name).write_text(text)
++
++os.chmod(out / "06-tempo-s3-secret.yaml", 0o600)
++os.chmod(out / "07-tempostack.yaml", 0o600)
++PY
++
++echo "Rendered manifests in $OUT"
+diff --git a/ossm34-observability/scripts/validate.sh b/ossm34-observability/scripts/validate.sh
+new file mode 100755
+index 0000000..a0e60b6
+--- /dev/null
++++ b/ossm34-observability/scripts/validate.sh
+@@ -0,0 +1,43 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
++ENV_FILE=${1:-"$ROOT/.env"}
++MODE=${2:---client}
++
++case "$MODE" in
++  --client) DRYRUN=client ;;
++  --server) DRYRUN=server ;;
++  *) echo "usage: $0 [env-file] [--client|--server]" >&2; exit 2 ;;
++esac
++
++command -v oc >/dev/null 2>&1 || { echo "ERROR: oc not found" >&2; exit 1; }
++"$ROOT/scripts/render.sh" "$ENV_FILE"
++
++M="$ROOT/manifests"
++R="$ROOT/rendered"
++
++files=(
++  "$M/00-namespaces.yaml"
++  "$M/01-istio-cni.yaml"
++  "$M/02-istio.yaml"
++  "$M/03-mesh-telemetry.yaml"
++  "$M/04-istiod-servicemonitor.yaml"
++  "$M/08-otel-tempo-write-rbac.yaml"
++  "$R/06-tempo-s3-secret.yaml"
++  "$R/07-tempostack.yaml"
++  "$M/09-otel-collector.yaml"
++  "$M/10-kiali-monitoring-rbac.yaml"
++  "$M/11-kiali-tempo-read-rbac.yaml"
++  "$M/12-kiali.yaml"
++)
++
++for f in "${files[@]}"; do
++  echo "VALIDATE $f"
++  oc apply --dry-run="$DRYRUN" -f "$f" >/dev/null
++done
++
++echo "VALIDATE $M/05-istio-proxies-podmonitor.yaml (namespace=istio-system)"
++oc -n istio-system apply --dry-run="$DRYRUN" -f "$M/05-istio-proxies-podmonitor.yaml" >/dev/null
++
++echo "PASS: $DRYRUN dry-run validation"
+diff --git a/ossm34-observability/templates/06-tempo-s3-secret.yaml.in b/ossm34-observability/templates/06-tempo-s3-secret.yaml.in
+new file mode 100644
+index 0000000..1fb3c16
+--- /dev/null
++++ b/ossm34-observability/templates/06-tempo-s3-secret.yaml.in
+@@ -0,0 +1,11 @@
++apiVersion: v1
++kind: Secret
++metadata:
++  name: tempo-s3
++  namespace: tempo
++type: Opaque
++stringData:
++  bucket: "${S3_BUCKET}"
++  endpoint: "${S3_ENDPOINT}"
++  access_key_id: "${S3_ACCESS_KEY_ID}"
++  access_key_secret: "${S3_ACCESS_KEY_SECRET}"
+diff --git a/ossm34-observability/templates/07-tempostack.yaml.in b/ossm34-observability/templates/07-tempostack.yaml.in
+new file mode 100644
+index 0000000..c81de07
+--- /dev/null
++++ b/ossm34-observability/templates/07-tempostack.yaml.in
+@@ -0,0 +1,24 @@
++apiVersion: tempo.grafana.com/v1alpha1
++kind: TempoStack
++metadata:
++  name: mesh
++  namespace: tempo
++spec:
++  storage:
++    secret:
++      name: tempo-s3
++      type: s3
++  storageSize: 10Gi
++  tenants:
++    mode: openshift
++    authentication:
++    - tenantName: mesh
++      tenantId: "${TEMPO_TENANT_UUID}"
++  template:
++    gateway:
++      enabled: true
++      rbac:
++        enabled: true
++    queryFrontend:
++      jaegerQuery:
++        enabled: false
