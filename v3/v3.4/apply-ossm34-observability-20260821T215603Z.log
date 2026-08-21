@@ -1,0 +1,110 @@
+OK   command/oc
+OK   command/sed
+OK   command/base64
+OK   OpenShift 4.22.9
+awk: warning: escape sequence `\.' treated as plain `.'
+OK   operator/OpenShift Service Mesh 3.4
+awk: warning: escape sequence `\.' treated as plain `.'
+OK   operator/Kiali 2.27
+awk: warning: escape sequence `\.' treated as plain `.'
+OK   operator/Red Hat OpenTelemetry 0.152
+awk: warning: escape sequence `\.' treated as plain `.'
+OK   operator/Tempo 0.21
+OK   crd/istios.sailoperator.io
+OK   crd/istiocnis.sailoperator.io
+OK   crd/telemetries.telemetry.istio.io
+OK   crd/servicemonitors.monitoring.coreos.com
+OK   crd/podmonitors.monitoring.coreos.com
+OK   crd/opentelemetrycollectors.opentelemetry.io
+OK   crd/tempostacks.tempo.grafana.com
+OK   crd/kialis.kiali.io
+OK   crd/objectbucketclaims.objectbucket.io
+OK   storageclass/openshift-storage.noobaa.io
+OK   optional crd/uiplugins.observability.openshift.io
+Rendered:
+  06-istio-proxies-podmonitor-bookinfo.yaml
+  06-istio-proxies-podmonitor-istio-system.yaml
+  10-tempostack.yaml
+Warning: resource 'namespaces' is not namespace scoped
+
+Warning: resource 'clusterroles' is not namespace scoped in group 'rbac.authorization.k8s.io'
+
+Warning: resource 'clusterrolebindings' is not namespace scoped in group 'rbac.authorization.k8s.io'
+
+server dry-run manifests/00-namespaces.yaml
+Warning: resource namespaces/istio-system is missing the kubectl.kubernetes.io/last-applied-configuration annotation which is required by oc apply. oc apply should only be used on resources created declaratively by either oc create --save-config or oc apply. The missing annotation will be patched automatically.
+Warning: resource namespaces/istio-cni is missing the kubectl.kubernetes.io/last-applied-configuration annotation which is required by oc apply. oc apply should only be used on resources created declaratively by either oc create --save-config or oc apply. The missing annotation will be patched automatically.
+Warning: resource namespaces/tempo is missing the kubectl.kubernetes.io/last-applied-configuration annotation which is required by oc apply. oc apply should only be used on resources created declaratively by either oc create --save-config or oc apply. The missing annotation will be patched automatically.
+server dry-run manifests/01-user-workload-monitoring.yaml
+server dry-run manifests/02-istio-cni.yaml
+Warning: resource istiocnis/default is missing the kubectl.kubernetes.io/last-applied-configuration annotation which is required by oc apply. oc apply should only be used on resources created declaratively by either oc create --save-config or oc apply. The missing annotation will be patched automatically.
+server dry-run manifests/03-istio.yaml
+Warning: resource istios/default is missing the kubectl.kubernetes.io/last-applied-configuration annotation which is required by oc apply. oc apply should only be used on resources created declaratively by either oc create --save-config or oc apply. The missing annotation will be patched automatically.
+server dry-run manifests/04-mesh-telemetry.yaml
+server dry-run manifests/05-istiod-servicemonitor.yaml
+server dry-run manifests/09-tempo-tenant-rbac.yaml
+server dry-run manifests/11-otel-rbac.yaml
+server dry-run manifests/12-otel-collector.yaml
+server dry-run manifests/13-kiali-rbac.yaml
+server dry-run manifests/14-kiali.yaml
+server dry-run storage/odf/07-tempo-obc.yaml
+server dry-run rendered/06-istio-proxies-podmonitor-bookinfo.yaml
+server dry-run rendered/06-istio-proxies-podmonitor-istio-system.yaml
+server dry-run rendered/10-tempostack.yaml
+Warning: could not fetch storage configuration secret: Secret "tempostack-odf" not found. Tempo will start once the storage secret is available
+Validation passed.
+== 2. Namespaces ==
+Warning: resource namespaces/istio-system is missing the kubectl.kubernetes.io/last-applied-configuration annotation which is required by oc apply. oc apply should only be used on resources created declaratively by either oc create --save-config or oc apply. The missing annotation will be patched automatically.
+namespace/istio-system configured
+Warning: resource namespaces/istio-cni is missing the kubectl.kubernetes.io/last-applied-configuration annotation which is required by oc apply. oc apply should only be used on resources created declaratively by either oc create --save-config or oc apply. The missing annotation will be patched automatically.
+namespace/istio-cni configured
+Warning: resource namespaces/tempo is missing the kubectl.kubernetes.io/last-applied-configuration annotation which is required by oc apply. oc apply should only be used on resources created declaratively by either oc create --save-config or oc apply. The missing annotation will be patched automatically.
+namespace/tempo configured
+== 3. User workload monitoring ==
+User workload monitoring is already enabled.
+OK   User workload monitoring enabled.
+== 4. IstioCNI + Istio ==
+Warning: resource istiocnis/default is missing the kubectl.kubernetes.io/last-applied-configuration annotation which is required by oc apply. oc apply should only be used on resources created declaratively by either oc create --save-config or oc apply. The missing annotation will be patched automatically.
+istiocni.sailoperator.io/default configured
+istiocni.sailoperator.io/default condition met
+Warning: resource istios/default is missing the kubectl.kubernetes.io/last-applied-configuration annotation which is required by oc apply. oc apply should only be used on resources created declaratively by either oc create --save-config or oc apply. The missing annotation will be patched automatically.
+istio.sailoperator.io/default configured
+istio.sailoperator.io/default condition met
+== 5. Mesh Telemetry ==
+telemetry.telemetry.istio.io/mesh-observability created
+== 6. Istio monitoring ==
+servicemonitor.monitoring.coreos.com/istiod-monitor created
+podmonitor.monitoring.coreos.com/istio-proxies-monitor created
+podmonitor.monitoring.coreos.com/istio-proxies-monitor created
+== 7. ODF object bucket ==
+objectbucketclaim.objectbucket.io/tempo-odf created
+== 8. Tempo storage Secret ==
+ODF bucket:
+  name           = tempo-traces-2721ba14-ce28-4581-8c70-2928bf8ae4d6
+  OBC host       = s3.openshift-storage.svc
+  OBC port       = 443
+  Tempo endpoint = https://s3.openshift-storage.svc
+secret/tempostack-odf created
+Tempo storage Secret tempo/tempostack-odf keys:
+access_key_id
+access_key_secret
+bucket
+endpoint
+== 9. Tempo tenant roles ==
+clusterrole.rbac.authorization.k8s.io/tempo-mesh-traces-writer created
+clusterrole.rbac.authorization.k8s.io/tempo-mesh-traces-reader created
+== 10. TempoStack ==
+tempostack.tempo.grafana.com/mesh created
+tempostack.tempo.grafana.com/mesh condition met
+== 11. OTel ServiceAccount + Tempo writer binding ==
+serviceaccount/otel-collector created
+clusterrolebinding.rbac.authorization.k8s.io/tempo-mesh-traces-writer-otel created
+== 12. OTel Collector ==
+opentelemetrycollector.opentelemetry.io/otel created
+deployment.apps/otel-collector condition met
+== 13. Kiali monitoring + Tempo reader bindings ==
+clusterrolebinding.rbac.authorization.k8s.io/kiali-monitoring-rbac-v34 created
+clusterrolebinding.rbac.authorization.k8s.io/tempo-mesh-traces-reader-kiali created
+== 14. Kiali ==
+kiali.kiali.io/kiali created
+Error from server (NotFound): deployments.apps "kiali" not found

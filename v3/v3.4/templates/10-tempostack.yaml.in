@@ -5,15 +5,19 @@ metadata:
   namespace: tempo
 spec:
   managementState: Managed
+  observability:
+    metrics:
+      createServiceMonitors: true
+      createPrometheusRules: true
   storage:
     secret:
       name: tempostack-odf
       type: s3
   tenants:
-    authentication:
-    - tenantId: __TEMPO_TENANT_ID__
-      tenantName: mesh
     mode: openshift
+    authentication:
+    - tenantName: mesh
+      tenantId: __TEMPO_TENANT_ID__
   template:
     gateway:
       enabled: true

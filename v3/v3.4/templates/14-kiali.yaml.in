@@ -18,19 +18,23 @@ spec:
       auth:
         type: bearer
         use_kiali_token: true
-        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
-        insecure_skip_verify: false
       thanos_proxy:
         enabled: true
     tracing:
       enabled: true
       provider: tempo
       use_grpc: false
+      namespace_selector: true
       internal_url: https://tempo-mesh-gateway.tempo.svc.cluster.local:8080/api/traces/v1/mesh/tempo
+      external_url: __OPENSHIFT_CONSOLE_URL__
+      tempo_config:
+        name: mesh
+        namespace: tempo
+        tenant: mesh
+        url_format: openshift
       auth:
         type: bearer
         use_kiali_token: true
-        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
         insecure_skip_verify: false
   istio_namespace: istio-system
   version: default
