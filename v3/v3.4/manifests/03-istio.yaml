@@ -4,7 +4,7 @@ metadata:
   name: default
 spec:
   namespace: istio-system
-  version: v1.30.3
+  version: v1.30.4
   values:
     meshConfig:
       discoverySelectors:

@@ -13,11 +13,12 @@ wait_for_labeled_resources() {
   local namespace="$1"
   local kind="$2"
   local selector="$3"
+  local timeout_seconds="${4:-180}"
+  local deadline=$((SECONDS + timeout_seconds))
   local found=""
-  for _ in $(seq 1 60); do
-    found="$(
-      oc get "${kind}" -n "${namespace}" -l "${selector}" -o name 2>/dev/null || true
-    )"
+
+  while (( SECONDS < deadline )); do
+    found="$(oc --request-timeout="${KUBE_API_REQUEST_TIMEOUT:-15s}" get "${kind}" -n "${namespace}" -l "${selector}" -o name 2>/dev/null || true)"
     [[ -n "${found}" ]] && break
     sleep 2
   done
@@ -28,67 +29,65 @@ wait_for_labeled_resources() {
   printf '%s\n' "${found}"
 }
 
-echo "Checking Sail control plane..."
-oc wait --for=condition=Ready istiocni/default \
-  -n istio-cni --timeout=1m
-oc wait --for=condition=Ready istio/default \
-  -n istio-system --timeout=1m
+echo "Checking Sail control plane CR readiness..."
+wait_cr_condition "istiocnis.sailoperator.io/default" istio-cni Ready 180
+wait_cr_condition "istios.sailoperator.io/default" istio-system Ready 180
 
-echo "Checking Telemetry and Istio metrics monitors..."
-oc get telemetry mesh-observability -n istio-system
-oc get servicemonitor istiod-monitor -n istio-system
+echo "Checking Telemetry and Istio metrics monitor CRs..."
+wait_resource_exists "telemetries.telemetry.istio.io/mesh-observability" istio-system 60
+[[ "$(oc_get telemetry mesh-observability -n istio-system -o jsonpath='{.spec.tracing[0].providers[0].name}')" == "otel-tracing" ]] || {
+  echo "ERROR: mesh-observability does not select otel-tracing." >&2
+  exit 1
+}
+[[ "$(oc_get telemetry mesh-observability -n istio-system -o jsonpath='{.spec.tracing[0].randomSamplingPercentage}')" == "10" || \
+   "$(oc_get telemetry mesh-observability -n istio-system -o jsonpath='{.spec.tracing[0].randomSamplingPercentage}')" == "10.0" ]] || {
+  echo "ERROR: mesh-observability sampling is not 10%." >&2
+  exit 1
+}
+wait_resource_exists "servicemonitors.monitoring.coreos.com/istiod-monitor" istio-system 60
 for ns in ${MESH_NAMESPACES}; do
-  oc get podmonitor istio-proxies-monitor -n "${ns}"
+  wait_resource_exists "podmonitors.monitoring.coreos.com/istio-proxies-monitor" "${ns}" 60
 done
 
 echo "Checking user workload monitoring..."
-cfg="$(
-  oc get configmap cluster-monitoring-config \
-    -n openshift-monitoring \
-    -o jsonpath='{.data.config\.yaml}'
-)"
-printf '%s\n' "${cfg}" |
-  grep -Eq '^[[:space:]]*enableUserWorkload:[[:space:]]*true[[:space:]]*$'
-oc get pods -n openshift-user-workload-monitoring
+cfg="$(oc_get configmap cluster-monitoring-config -n openshift-monitoring -o jsonpath='{.data.config\.yaml}')"
+printf '%s\n' "${cfg}" | grep -Eq '^[[:space:]]*enableUserWorkload:[[:space:]]*true[[:space:]]*$' || {
+  echo "ERROR: user workload monitoring is not enabled." >&2
+  exit 1
+}
+oc_get pods -n openshift-user-workload-monitoring >/dev/null
+require_all_pods_ready openshift-user-workload-monitoring 180
 
 echo "Checking ODF and Tempo..."
-[[ "$(
-  oc get obc tempo-odf -n tempo -o jsonpath='{.status.phase}'
-)" == "Bound" ]]
-oc get secret "${TEMPO_STORAGE_SECRET}" -n tempo >/dev/null
+wait_obc_bound tempo tempo-odf 120
+oc_get secret "${TEMPO_STORAGE_SECRET}" -n tempo >/dev/null
 for key in bucket endpoint access_key_id access_key_secret; do
-  oc get secret "${TEMPO_STORAGE_SECRET}" \
-    -n tempo \
-    -o "jsonpath={.data.${key}}" |
-    grep -q .
+  oc_get secret "${TEMPO_STORAGE_SECRET}" -n tempo -o "jsonpath={.data.${key}}" | grep -q . || {
+    echo "ERROR: Tempo storage Secret key '${key}' is missing/empty." >&2
+    exit 1
+  }
 done
-oc wait --for=condition=Ready tempostack/mesh \
-  -n tempo --timeout=1m
-oc get svc tempo-mesh-gateway -n tempo
+wait_cr_condition "tempostacks.tempo.grafana.com/mesh" tempo Ready 180
+require_selector_pods_ready tempo 'app.kubernetes.io/instance=mesh' 180
+wait_resource_exists "services/tempo-mesh-gateway" tempo 60
+require_service_endpoints tempo tempo-mesh-gateway 120
 
-echo "Checking Tempo operator-managed monitoring..."
-wait_for_labeled_resources tempo servicemonitor 'app.kubernetes.io/instance=mesh' >/dev/null
-wait_for_labeled_resources tempo prometheusrule 'app.kubernetes.io/instance=mesh' >/dev/null
-oc get servicemonitor -n tempo
-oc get prometheusrule -n tempo
+echo "Checking Tempo operator-managed monitoring CRs..."
+wait_for_labeled_resources tempo servicemonitor 'app.kubernetes.io/instance=mesh' 180 >/dev/null
+wait_for_labeled_resources tempo prometheusrule 'app.kubernetes.io/instance=mesh' 180 >/dev/null
 
-echo "Checking OTel..."
+echo "Checking OTel CR, operand, RBAC, and monitoring..."
 require_tempo_sar \
   "otel-collector" \
   "system:serviceaccount:istio-system:otel-collector" \
   create
-oc get clusterrolebinding tempo-mesh-traces-writer-otel >/dev/null
-oc get opentelemetrycollector otel -n istio-system
-oc wait --for=condition=Available deployment/otel-collector \
-  -n istio-system --timeout=1m
-oc get svc otel-collector -n istio-system
-
-echo "Checking OTel operator-managed monitoring..."
-for _ in $(seq 1 60); do
-  otel_monitors="$(
-    oc get servicemonitor,podmonitor -n istio-system -o name 2>/dev/null |
-    grep -Ei 'otel|opentelemetry' || true
-  )"
+wait_resource_exists "clusterrolebindings.rbac.authorization.k8s.io/tempo-mesh-traces-writer-otel" "" 60
+wait_cr_condition "opentelemetrycollectors.opentelemetry.io/otel" istio-system Ready 180
+wait_deployment_available istio-system otel-collector 120
+wait_resource_exists "services/otel-collector" istio-system 60
+require_service_endpoints istio-system otel-collector 120
+for _ in $(seq 1 90); do
+  otel_monitors="$(oc_get servicemonitor,podmonitor -n istio-system -o name 2>/dev/null | grep -Ei 'otel|opentelemetry' || true)"
   [[ -n "${otel_monitors}" ]] && break
   sleep 2
 done
@@ -98,52 +97,64 @@ done
 }
 printf '%s\n' "${otel_monitors}"
 
-echo "Checking Kiali and its role bindings..."
+echo "Checking Kiali CR, operand, RBAC, and tracing configuration..."
 require_tempo_sar \
   "kiali-service-account" \
   "system:serviceaccount:istio-system:kiali-service-account" \
   get
-[[ "$(
-  oc auth can-i get pods \
-    --as=system:serviceaccount:istio-system:kiali-service-account \
-    -n istio-system
-)" == "yes" ]] || {
+[[ "$(oc auth can-i get pods --as=system:serviceaccount:istio-system:kiali-service-account -n istio-system)" == "yes" ]] || {
   echo "ERROR: kiali-service-account cannot read the mesh namespace." >&2
   exit 1
 }
-oc get clusterrolebinding kiali-monitoring-rbac-v34 >/dev/null
-oc get clusterrolebinding tempo-mesh-traces-reader-kiali >/dev/null
-oc get kiali kiali -n istio-system
-oc wait --for=condition=Available deployment/kiali \
-  -n istio-system --timeout=1m
-kiali_sa="$(
-  oc get deployment kiali -n istio-system \
-    -o jsonpath='{.spec.template.spec.serviceAccountName}'
-)"
+wait_resource_exists "clusterrolebindings.rbac.authorization.k8s.io/kiali-monitoring-rbac-v34" "" 60
+wait_resource_exists "clusterrolebindings.rbac.authorization.k8s.io/tempo-mesh-traces-reader-kiali" "" 60
+wait_cr_condition "kialis.kiali.io/kiali" istio-system Successful 180
+wait_deployment_available istio-system kiali 120
+require_service_endpoints istio-system kiali 120
+kiali_sa="$(oc_get deployment kiali -n istio-system -o jsonpath='{.spec.template.spec.serviceAccountName}')"
 [[ "${kiali_sa}" == "kiali-service-account" ]] || {
   echo "ERROR: Kiali deployment uses ServiceAccount '${kiali_sa}', but RBAC targets kiali-service-account." >&2
   exit 1
 }
-oc get svc thanos-querier -n openshift-monitoring
+wait_resource_exists "services/thanos-querier" openshift-monitoring 60
 
-console_url="https://$(
-  oc get route console -n openshift-console -o jsonpath='{.spec.host}'
-)"
-[[ "$(oc get kiali kiali -n istio-system -o jsonpath='{.spec.external_services.tracing.external_url}')" == "${console_url}" ]] || {
+console_url="https://$(oc_get route console -n openshift-console -o jsonpath='{.spec.host}')"
+[[ "$(oc_get kiali kiali -n istio-system -o jsonpath='{.spec.external_services.tracing.external_url}')" == "${console_url}" ]] || {
   echo "ERROR: Kiali tracing external_url does not target the OpenShift console." >&2
   exit 1
 }
-[[ "$(oc get kiali kiali -n istio-system -o jsonpath='{.spec.external_services.tracing.tempo_config.url_format}')" == "openshift" ]] || {
+[[ "$(oc_get kiali kiali -n istio-system -o jsonpath='{.spec.external_services.tracing.tempo_config.url_format}')" == "openshift" ]] || {
   echo "ERROR: Kiali tempo_config.url_format is not openshift." >&2
   exit 1
 }
 
+
+if [[ "${ENABLE_MESH_CONSOLE:-1}" == "1" ]]; then
+  echo "Checking OpenShift Service Mesh Console reconciliation..."
+  wait_cr_condition "ossmconsoles.kiali.io/ossmconsole" openshift-operators Successful 180
+  require_console_plugin_backend ossmconsole 180
+fi
+
 if [[ "${ENABLE_TRACING_UI:-1}" == "1" ]]; then
-  echo "Checking OpenShift distributed tracing UI..."
-  oc get uiplugin distributed-tracing >/dev/null
+  echo "Checking OpenShift distributed tracing UIPlugin reconciliation..."
+  wait_cr_condition "uiplugins.observability.openshift.io/distributed-tracing" "" Available 180
+fi
+
+if [[ "${DEPLOY_BOOKINFO:-1}" == "1" ]]; then
+  echo "Checking Bookinfo application, sidecars, gateway CRs, and Route..."
+  for deployment in details-v1 ratings-v1 reviews-v1 reviews-v2 reviews-v3 productpage-v1 istio-ingressgateway; do
+    wait_deployment_available bookinfo "${deployment}" 120
+  done
+  for service in details ratings reviews productpage istio-ingressgateway; do
+    require_service_endpoints bookinfo "${service}" 120
+  done
+  for app in details ratings reviews productpage; do
+    require_selector_pods_container bookinfo "app=${app}" istio-proxy 120
+  done
+  require_istio_bookinfo_routing bookinfo 60
+  wait_route_admitted bookinfo istio-ingressgateway 120
+  require_bookinfo_ingress_contract bookinfo
 fi
 
 echo
-echo "Core OSSM 3.4 observability readiness checks passed."
-echo "For an actual trace round-trip, run:"
-echo "  TRACE_TEST_URL=https://<mesh-app-url>/ ./scripts/e2e-check.sh"
+echo "Core OSSM 3.4 observability and Bookinfo readiness checks passed."

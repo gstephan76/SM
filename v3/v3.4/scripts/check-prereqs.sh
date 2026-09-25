@@ -30,9 +30,8 @@ need_csv() {
   local label="$1"
   local regex="$2"
   if oc get csv -A --no-headers \
-      -o custom-columns=NAME:.metadata.name,PHASE:.status.phase 2>/dev/null |
-      awk -v re="${regex}" '$1 ~ re && $2 == "Succeeded" { found=1 } END { exit !found }'
-  then
+    -o custom-columns=NAME:.metadata.name,PHASE:.status.phase 2>/dev/null |
+    awk -v re="${regex}" '$1 ~ re && $2 == "Succeeded" { found=1 } END { exit !found }'; then
     echo "OK   operator/${label}"
   else
     echo "MISS operator/${label}"
@@ -40,10 +39,10 @@ need_csv() {
   fi
 }
 
-for cmd in oc sed base64; do
+for cmd in oc sed base64 curl jq awk; do
   need_cmd "${cmd}"
 done
-(( missing == 0 )) || {
+((missing == 0)) || {
   echo "ERROR: required local commands are missing." >&2
   exit 1
 }
@@ -51,22 +50,25 @@ done
 oc whoami >/dev/null
 
 ocp_version="$(oc get clusterversion version -o jsonpath='{.status.desired.version}' 2>/dev/null || true)"
-case "${ocp_version}" in
-  4.22.*)
-    echo "OK   OpenShift ${ocp_version}"
-    ;;
-  *)
-    echo "MISS expected OpenShift 4.22.x; cluster reports '${ocp_version:-unknown}'"
-    missing=1
-    ;;
-esac
+if [[ "${ocp_version}" =~ ^4[.]22[.][0-9]+$ ]]; then
+  echo "OK   OpenShift ${ocp_version}"
+else
+  echo "MISS expected OpenShift 4.22.x; cluster reports '${ocp_version:-unknown}'"
+  missing=1
+fi
 
 # Bracketed dots avoid awk's warning about the non-standard \.-escape inside
 # a string passed with -v while preserving the intended literal-dot regex.
 need_csv "OpenShift Service Mesh 3.4" '^servicemeshoperator3[.]v3[.]4[.]'
 need_csv "Kiali 2.27" '^kiali-operator[.]v2[.]27[.]'
-need_csv "Red Hat OpenTelemetry 0.152" '^opentelemetry-operator[.]v0[.]152[.]'
-need_csv "Tempo 0.21" '^tempo-operator[.]v0[.]21[.]'
+need_csv "Red Hat OpenTelemetry 0.152.x or 0.158.x" '^opentelemetry-operator[.]v0[.](152|158)[.]'
+need_csv "Tempo 0.21.x or 0.22.x" '^tempo-operator[.]v0[.](21|22)[.]'
+
+if api_resource_exists endpointslices.discovery.k8s.io; then
+  echo "OK   api/endpointslices.discovery.k8s.io (preferred Service readiness source)"
+else
+  echo "WARN api/endpointslices.discovery.k8s.io unavailable; Service readiness will fall back to core/v1 Endpoints"
+fi
 
 for crd in \
   istios.sailoperator.io \
@@ -77,8 +79,9 @@ for crd in \
   opentelemetrycollectors.opentelemetry.io \
   tempostacks.tempo.grafana.com \
   kialis.kiali.io \
-  objectbucketclaims.objectbucket.io
-do
+  gateways.networking.istio.io \
+  virtualservices.networking.istio.io \
+  objectbucketclaims.objectbucket.io; do
   need_crd "${crd}"
 done
 
@@ -99,7 +102,18 @@ if [[ -n "${smcp}" && "${ALLOW_OSSM2_COEXISTENCE:-0}" != "1" ]]; then
   exit 1
 fi
 
+if [[ "${ENABLE_MESH_CONSOLE:-1}" == "1" ]]; then
+  need_crd ossmconsoles.kiali.io
+else
+  if oc get crd ossmconsoles.kiali.io >/dev/null 2>&1; then
+    echo "OK   optional crd/ossmconsoles.kiali.io"
+  else
+    echo "WARN Service Mesh console disabled and OSSMConsole CRD is unavailable"
+  fi
+fi
+
 if [[ "${ENABLE_TRACING_UI:-1}" == "1" ]]; then
+  need_csv "Cluster Observability 1.x" '^cluster-observability-operator[.]v1[.]'
   need_crd uiplugins.observability.openshift.io
 else
   if oc get crd uiplugins.observability.openshift.io >/dev/null 2>&1; then
@@ -109,7 +123,7 @@ else
   fi
 fi
 
-(( missing == 0 )) || {
+((missing == 0)) || {
   echo "ERROR: OSSM 3.4 observability prerequisites are incomplete." >&2
   exit 1
 }
