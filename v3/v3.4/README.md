@@ -151,7 +151,7 @@ Telemetry conflict detection, and **server-side dry-run** validation against the
 CRDs actually installed on the cluster. On a brand-new cluster, Kubernetes cannot
 server-dry-run namespaced objects until their target Namespaces exist. For only
 that bootstrap condition, `validate.sh` performs strict client dry-run validation
-and marks the server checks as deferred. `apply.sh` then creates the three target
+and marks the server checks as deferred. `apply.sh` then creates the four target
 Namespaces and reruns `validate.sh`, requiring the complete server-side dry-run to
 pass before it applies user-workload monitoring, Istio, Tempo, OTel, Kiali, or UI
 resources.
@@ -178,10 +178,10 @@ The test must prove **this run**, not merely observe stale telemetry. It verifie
 1. the external Bookinfo `/productpage` response and page content;
 2. an independent in-mesh `ratings -> productpage` service request;
 3. `E2E_REQUESTS` normal ingress requests with the configured 10% sampler and no more than `E2E_MAX_HTTP_FAILURES` failures;
-4. multiple forced-sampled requests carrying unique known B3 trace IDs;
+4. multiple forced-sampled requests carrying unique known W3C `traceparent` trace IDs;
 5. exact Tempo retrieval of every forced trace ID;
 6. service-chain membership for ingress, productpage, details, reviews, plus at least one trace including ratings;
-7. an `x-b3-sampled: 0` negative control that must not be stored;
+7. a W3C `traceparent` negative control with trace-flags `00` that must not be stored;
 8. a separate bounded random-sampling search window requiring at least `E2E_MIN_RANDOM_TRACES` traces;
 9. no OTel export/auth/TLS/drop errors since the E2E start time;
 10. a **before/after** Thanos query proving `istio_requests_total{destination_service_namespace="bookinfo"}` increased by at least `E2E_MIN_METRIC_DELTA` during the test;
@@ -267,7 +267,13 @@ runtime:
 - `bookinfo/03-route.yaml` — declarative OpenShift `Route` equivalent to `oc expose service istio-ingressgateway`.
 
 The `bookinfo` Namespace is labeled `istio-discovery=enabled` and
-`istio-injection=enabled`. `apply.sh` waits for all Bookinfo deployments,
+`istio-injection=enabled`. The dedicated Bookinfo ingress pod carries
+`app.kubernetes.io/component=bookinfo-ingressgateway`, and the Istio
+`Gateway` requires that label in addition to `istio=ingressgateway`. This
+prevents another wildcard `*:8080` Gateway in a different namespace from
+selecting the Bookinfo ingress workload.
+
+`apply.sh` waits for all Bookinfo deployments,
 sidecars, service endpoints, the injected ingress gateway, the Istio Gateway and
 VirtualService objects, and Route admission before final validation.
 

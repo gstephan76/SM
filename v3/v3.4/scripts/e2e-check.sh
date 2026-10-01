@@ -218,16 +218,15 @@ echo "HTTP failures: ${http_failures}/${E2E_REQUESTS}"
 # Separate the random-sampling window from the forced-sampling control window.
 sleep 2
 
-echo "== E2E 4/8: forced-sampling positive controls and no-sample negative control =="
+echo "== E2E 4/8: W3C forced-sampling positive controls and no-sample negative control =="
 unsampled_trace_id="$(new_trace_id)"
 unsampled_span_id="$(new_span_id)"
+unsampled_traceparent="00-${unsampled_trace_id}-${unsampled_span_id}-00"
 control_body="${work}/unsampled.html"
 code="$(curl_bookinfo "${control_body}" \
-  -H "x-b3-traceid: ${unsampled_trace_id}" \
-  -H "x-b3-spanid: ${unsampled_span_id}" \
-  -H 'x-b3-sampled: 0' || true)"
+  -H "traceparent: ${unsampled_traceparent}" || true)"
 [[ "${code}" == "200" ]] || {
-  echo "ERROR: unsampled control request returned HTTP ${code}." >&2
+  echo "ERROR: unsampled W3C control request returned HTTP ${code}." >&2
   exit 1
 }
 
@@ -235,22 +234,21 @@ declare -a forced_trace_ids=()
 for i in $(seq 1 "${E2E_FORCED_TRACES}"); do
   trace_id="$(new_trace_id)"
   span_id="$(new_span_id)"
+  traceparent="00-${trace_id}-${span_id}-01"
   forced_trace_ids+=("${trace_id}")
   forced_body="${work}/forced-${trace_id}.html"
   code="$(curl_bookinfo "${forced_body}" \
-    -H "x-b3-traceid: ${trace_id}" \
-    -H "x-b3-spanid: ${span_id}" \
-    -H 'x-b3-sampled: 1' || true)"
+    -H "traceparent: ${traceparent}" || true)"
   [[ "${code}" == "200" ]] || {
-    echo "ERROR: forced trace ${trace_id} returned HTTP ${code}." >&2
+    echo "ERROR: forced W3C trace ${trace_id} returned HTTP ${code}." >&2
     exit 1
   }
   validate_bookinfo_body "${forced_body}" || {
-    echo "ERROR: forced trace ${trace_id} did not return valid Bookinfo content." >&2
+    echo "ERROR: forced W3C trace ${trace_id} did not return valid Bookinfo content." >&2
     exit 1
   }
 done
-echo "OK   ${#forced_trace_ids[@]} exact trace IDs injected with x-b3-sampled=1"
+echo "OK   ${#forced_trace_ids[@]} exact W3C trace IDs injected with trace-flags=01"
 
 echo "== E2E 5/8: exact Tempo trace retrieval and distributed service-chain validation =="
 token="$(oc create token kiali-service-account -n istio-system --duration=15m)"
@@ -258,6 +256,38 @@ start_port_forward tempo svc/tempo-mesh-gateway "${TEMPO_LOCAL_PORT}:8080" "${wo
 
 trace_base="https://127.0.0.1:${TEMPO_LOCAL_PORT}/api/traces/v1/mesh/tempo/api/traces"
 search_url="https://127.0.0.1:${TEMPO_LOCAL_PORT}/api/traces/v1/mesh/tempo/api/search"
+
+dump_trace_failure_diagnostics() {
+  local now start diag_file diag_code
+
+  echo "--- OTel collector diagnostics since E2E start ---" >&2
+  oc logs -n istio-system deployment/otel-collector --since-time="${e2e_start_rfc3339}" 2>&1 |
+    tail -120 >&2 || true
+
+  now="$(date +%s)"
+  start="$((now - 600))"
+  diag_file="${work}/tempo-recent-bookinfo-search.json"
+  diag_code="$(curl -q --silent --show-error --insecure --get \
+    -o "${diag_file}" -w '%{http_code}' \
+    -H "Authorization: Bearer ${token}" \
+    --data-urlencode 'q={ resource.service.name = "istio-ingressgateway.bookinfo" }' \
+    --data-urlencode 'limit=20' \
+    --data-urlencode "start=${start}" \
+    --data-urlencode "end=${now}" \
+    "${search_url}" || true)"
+
+  echo "--- Tempo recent Bookinfo search: HTTP ${diag_code:-transport-failure} ---" >&2
+  if [[ "${diag_code}" == "200" ]]; then
+    jq '{
+      count: ((.traces // []) | length),
+      traces: ((.traces // [])[:20] |
+        map({traceID, rootServiceName, rootTraceName, startTimeUnixNano}))
+    }' "${diag_file}" >&2 || true
+  else
+    cat "${diag_file}" >&2 2>/dev/null || true
+  fi
+}
+
 full_chain_count=0
 found_count=0
 
@@ -286,6 +316,7 @@ for trace_id in "${forced_trace_ids[@]}"; do
     elif [[ "${last_code}" != "404" && "${last_code}" != "200" && -n "${last_code}" ]]; then
       echo "ERROR: Tempo trace lookup ${trace_id} returned HTTP ${last_code}." >&2
       cat "${trace_file}" >&2 2>/dev/null || true
+      dump_trace_failure_diagnostics
       exit 1
     fi
     sleep 3
@@ -297,6 +328,7 @@ for trace_id in "${forced_trace_ids[@]}"; do
     echo "Observed services:" >&2
     printf '%s\n' "${services:-<none>}" >&2
     [[ ! -s "${trace_file}" ]] || head -100 "${trace_file}" >&2
+    dump_trace_failure_diagnostics
     exit 1
   fi
 
@@ -317,8 +349,8 @@ done
 }
 echo "OK   ${found_count}/${E2E_FORCED_TRACES} exact forced traces found; ${full_chain_count} included ratings"
 
-# x-b3-sampled=0 is a negative control: a prior no-sample decision should be
-# respected by Istio. Check after positive traces have had time to appear.
+# W3C trace-flags=00 is a negative control: a prior no-sample decision should
+# be respected by Istio. Check after positive traces have had time to appear.
 negative_file="${work}/negative-trace.json"
 negative_code="$(curl -q --silent --show-error --insecure \
   -o "${negative_file}" -w '%{http_code}' \
@@ -329,17 +361,19 @@ case "${negative_code}" in
     ;;
   200)
     if jq -e '.batches? | length > 0' "${negative_file}" >/dev/null 2>&1; then
-      echo "ERROR: x-b3-sampled=0 negative-control trace ${unsampled_trace_id} was stored unexpectedly." >&2
+      echo "ERROR: W3C trace-flags=00 negative-control trace ${unsampled_trace_id} was stored unexpectedly." >&2
+      dump_trace_failure_diagnostics
       exit 1
     fi
     ;;
   *)
     echo "ERROR: negative-control Tempo lookup returned unexpected HTTP ${negative_code:-transport-failure}." >&2
     cat "${negative_file}" >&2 2>/dev/null || true
+    dump_trace_failure_diagnostics
     exit 1
     ;;
 esac
-echo "OK   x-b3-sampled=0 negative control was not stored"
+echo "OK   W3C trace-flags=00 negative control was not stored"
 
 echo "== E2E 6/8: random-sampling search window =="
 random_response="${work}/random-search.json"

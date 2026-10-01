@@ -30,6 +30,7 @@ load_stack_env() {
     E2E_TRACE_WAIT_SECONDS
     E2E_MAX_HTTP_FAILURES
     E2E_MIN_RANDOM_TRACES
+    E2E_MIN_METRIC_DELTA
     TEMPO_LOCAL_PORT
     THANOS_LOCAL_PORT
     KUBE_API_REQUEST_TIMEOUT
@@ -606,7 +607,7 @@ require_istio_bookinfo_routing() {
   local gateway_ref="gateways.networking.istio.io/bookinfo-gateway"
   local virtualservice_ref="virtualservices.networking.istio.io/bookinfo"
   local gateway_json vs_json
-  local selector port protocol gateway_link destination_host destination_port
+  local selector component port protocol gateway_link destination_host destination_port
 
   wait_resource_exists "${gateway_ref}" "${namespace}" "${timeout_seconds}"
   wait_resource_exists "${virtualservice_ref}" "${namespace}" "${timeout_seconds}"
@@ -615,20 +616,22 @@ require_istio_bookinfo_routing() {
   vs_json="$(oc_get_resource_ref "${virtualservice_ref}" "${namespace}" -o json)"
 
   selector="$(jq -r '.spec.selector.istio // ""' <<<"${gateway_json}")"
+  component="$(jq -r '.spec.selector["app.kubernetes.io/component"] // ""' <<<"${gateway_json}")"
   port="$(jq -r '[.spec.servers[]? | select(.port.number == 8080)] | length' <<<"${gateway_json}")"
   protocol="$(jq -r '[.spec.servers[]? | select(.port.number == 8080 and .port.protocol == "HTTP")] | length' <<<"${gateway_json}")"
   gateway_link="$(jq -r '[.spec.gateways[]? | select(. == "bookinfo-gateway" or . == "bookinfo/bookinfo-gateway")] | length' <<<"${vs_json}")"
   destination_host="$(jq -r '[.spec.http[]?.route[]?.destination.host | select(. == "productpage")] | length' <<<"${vs_json}")"
   destination_port="$(jq -r '[.spec.http[]?.route[]?.destination | select(.host == "productpage" and .port.number == 9080)] | length' <<<"${vs_json}")"
 
-  if [[ "${selector}" == "ingressgateway" ]] &&
+  if [[ "${selector}" == "ingressgateway" &&
+        "${component}" == "bookinfo-ingressgateway" ]] &&
      (( port > 0 && protocol > 0 && gateway_link > 0 && destination_host > 0 && destination_port > 0 )); then
-    echo "OK   Istio Bookinfo routing: Gateway selector/8080 HTTP and VirtualService -> productpage:9080"
+    echo "OK   Istio Bookinfo routing: isolated Gateway selector/8080 HTTP and VirtualService -> productpage:9080"
     return 0
   fi
 
   echo "ERROR: Istio Bookinfo Gateway/VirtualService semantic contract is not satisfied." >&2
-  echo "selector=${selector:-<missing>} port8080=${port} http8080=${protocol} gatewayLink=${gateway_link} destinationHost=${destination_host} destinationPort=${destination_port}" >&2
+  echo "selector=${selector:-<missing>} component=${component:-<missing>} port8080=${port} http8080=${protocol} gatewayLink=${gateway_link} destinationHost=${destination_host} destinationPort=${destination_port}" >&2
   oc_get_resource_ref "${gateway_ref}" "${namespace}" -o yaml >&2 || true
   oc_get_resource_ref "${virtualservice_ref}" "${namespace}" -o yaml >&2 || true
   return 1
