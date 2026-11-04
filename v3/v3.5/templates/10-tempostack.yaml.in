@@ -1,0 +1,28 @@
+apiVersion: tempo.grafana.com/v1alpha1
+kind: TempoStack
+metadata:
+  name: mesh
+  namespace: tempo
+spec:
+  managementState: Managed
+  observability:
+    metrics:
+      createServiceMonitors: true
+      createPrometheusRules: true
+  storage:
+    secret:
+      name: tempostack-odf
+      type: s3
+  tenants:
+    mode: openshift
+    authentication:
+    - tenantName: mesh
+      tenantId: __TEMPO_TENANT_ID__
+  template:
+    gateway:
+      enabled: true
+      rbac:
+        enabled: true
+    queryFrontend:
+      jaegerQuery:
+        enabled: false

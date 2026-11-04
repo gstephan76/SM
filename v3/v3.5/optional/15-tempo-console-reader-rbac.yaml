@@ -1,0 +1,14 @@
+# OPTIONAL: grants every authenticated OpenShift user GET access to the
+# Tempo tenant. Use a narrower Group/User subject in production if required.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: tempo-mesh-traces-reader-console
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tempo-mesh-traces-reader
+subjects:
+- kind: Group
+  apiGroup: rbac.authorization.k8s.io
+  name: system:authenticated

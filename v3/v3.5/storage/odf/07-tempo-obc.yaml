@@ -1,0 +1,8 @@
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: tempo-odf
+  namespace: tempo
+spec:
+  generateBucketName: tempo-traces
+  storageClassName: openshift-storage.noobaa.io
