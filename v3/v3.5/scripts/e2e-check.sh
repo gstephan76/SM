@@ -146,18 +146,32 @@ start_port_forward() {
   local mapping="$3"
   local log="$4"
   local __pidvar="$5"
-  local pid
+  local pid local_port env_override
+
+  local_port="${mapping%%:*}"
+  case "${resource}" in
+    svc/tempo-mesh-gateway) env_override=TEMPO_LOCAL_PORT ;;
+    svc/thanos-querier) env_override=THANOS_LOCAL_PORT ;;
+    *) env_override=LOCAL_PORT ;;
+  esac
 
   oc -n "${namespace}" port-forward "${resource}" "${mapping}" >"${log}" 2>&1 &
   pid=$!
   printf -v "${__pidvar}" '%s' "${pid}"
 
   for _ in $(seq 1 30); do
-    grep -q 'Forwarding from' "${log}" && return 0
     if ! kill -0 "${pid}" >/dev/null 2>&1; then
       cat "${log}" >&2
-      echo "ERROR: port-forward ${namespace}/${resource} exited early." >&2
+      if grep -qi 'address already in use\|bind:.*address already in use' "${log}"; then
+        echo "ERROR: local port ${local_port} is already in use for ${namespace}/${resource}." >&2
+        echo "Stop your earlier port-forward, or rerun using ${env_override}=<free-port> ./scripts/e2e-check.sh --fast" >&2
+      else
+        echo "ERROR: port-forward ${namespace}/${resource} exited early." >&2
+      fi
       return 1
+    fi
+    if grep -q 'Forwarding from' "${log}"; then
+      return 0
     fi
     sleep 1
   done
@@ -203,6 +217,10 @@ has_service() {
   grep -Eq "^${prefix}([.]bookinfo)?$" <<<"${services}"
 }
 
+echo "== E2E 0/8: local port-forward readiness =="
+start_port_forward openshift-monitoring svc/thanos-querier "${THANOS_LOCAL_PORT}:9091" "${work}/thanos-pf.log" thanos_pf_pid
+start_port_forward tempo svc/tempo-mesh-gateway "${TEMPO_LOCAL_PORT}:8080" "${work}/tempo-pf.log" tempo_pf_pid
+
 echo "== E2E 1/8: external Bookinfo application response =="
 body="${work}/productpage.html"
 code="$(curl_bookinfo "${body}" || true)"
@@ -233,7 +251,6 @@ echo "OK   in-mesh ratings -> productpage service request"
 echo "== E2E 3/8: normal 10% sampling traffic =="
 # Take a metric baseline before the generated load. Requiring only a positive
 # historical counter could otherwise let stale traffic satisfy the metrics gate.
-start_port_forward openshift-monitoring svc/thanos-querier "${THANOS_LOCAL_PORT}:9091" "${work}/thanos-pf.log" thanos_pf_pid
 metric_token="$(oc create token kiali-service-account -n istio-system --duration=10m)"
 metric_before_file="${work}/thanos-before.json"
 metric_before="$(query_thanos_bookinfo_metric "${metric_token}" "${metric_before_file}" || echo 0)"
@@ -278,7 +295,8 @@ for i in $(seq 1 "${E2E_FORCED_TRACES}"); do
   forced_trace_ids+=("${trace_id}")
   forced_body="${work}/forced-${trace_id}.html"
   code="$(curl_bookinfo "${forced_body}" \
-    -H "traceparent: ${traceparent}" || true)"
+    -H "traceparent: ${traceparent}" \
+    -H "x-client-trace-id: ${trace_id}" || true)"
   [[ "${code}" == "200" ]] || {
     echo "ERROR: forced W3C trace ${trace_id} returned HTTP ${code}." >&2
     exit 1
@@ -288,11 +306,10 @@ for i in $(seq 1 "${E2E_FORCED_TRACES}"); do
     exit 1
   }
 done
-echo "OK   ${#forced_trace_ids[@]} exact W3C trace IDs injected with trace-flags=01"
+echo "OK   ${#forced_trace_ids[@]} exact W3C trace IDs injected with trace-flags=01 and x-client-trace-id"
 
 echo "== E2E 5/8: exact Tempo trace retrieval and distributed service-chain validation =="
 token="$(oc create token kiali-service-account -n istio-system --duration=15m)"
-start_port_forward tempo svc/tempo-mesh-gateway "${TEMPO_LOCAL_PORT}:8080" "${work}/tempo-pf.log" tempo_pf_pid
 
 trace_base="https://127.0.0.1:${TEMPO_LOCAL_PORT}/api/traces/v1/mesh/tempo/api/traces"
 search_url="https://127.0.0.1:${TEMPO_LOCAL_PORT}/api/traces/v1/mesh/tempo/api/search"

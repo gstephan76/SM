@@ -28,6 +28,13 @@ for ns in istio-system istio-cni tempo bookinfo; do
   fi
 done
 
+# ODF is intentionally opt-in: the ordinary deploy path must not mutate
+# existing ODF operator subscriptions, persistent volumes, or StorageClusters.
+if [[ "${BOOTSTRAP_MCG:-0}" == "1" ]]; then
+  begin_apply_step "0. ODF 4.22 standalone MCG bootstrap"
+  "${ROOT}/storage/odf/bootstrap-mcg.sh"
+fi
+
 "${ROOT}/scripts/validate.sh"
 
 begin_apply_step "2. Namespaces"

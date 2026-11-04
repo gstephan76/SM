@@ -104,6 +104,14 @@ else
   missing=1
 fi
 
+# OBC API existence alone cannot prove that a new NooBaa gateway can allocate
+# Tempo buckets. This check also catches incomplete PV-pool provisioning.
+if [[ "${CHECK_MCG_HEALTH:-1}" == "1" ]]; then
+  if ! "${ROOT}/storage/odf/check-mcg.sh" --quick; then
+    missing=1
+  fi
+fi
+
 smcp="$(
   oc get servicemeshcontrolplane.maistra.io -A --no-headers 2>/dev/null || true
 )"
