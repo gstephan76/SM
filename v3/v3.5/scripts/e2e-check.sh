@@ -183,7 +183,7 @@ start_port_forward() {
 query_thanos_bookinfo_metric() {
   local token="$1"
   local response="$2"
-  local query='sum(istio_requests_total{destination_service_namespace="bookinfo"})'
+  local query='sum(istio_requests_total{destination_service_namespace="bookinfo",pod_name=~"waypoint-istio-.*"})'
   local code value
 
   code="$(curl -q --silent --show-error --insecure --get \
@@ -192,8 +192,8 @@ query_thanos_bookinfo_metric() {
     --data-urlencode "query=${query}" \
     "https://127.0.0.1:${THANOS_LOCAL_PORT}/api/v1/query" || true)"
   [[ "${code}" == "200" ]] || return 1
-  value="$(jq -r '.data.result[0].value[1] // "0"' "${response}" 2>/dev/null || true)"
-  [[ "${value}" =~ ^[0-9]+([.][0-9]+)?$ ]] || value=0
+  value="$(jq -er 'select(.status == "success" and (.data.result | type) == "array") | if (.data.result | length) == 0 then "0" else .data.result[0].value[1] end' "${response}" 2>/dev/null)" || return 1
+  [[ "${value}" =~ ^[0-9]+([.][0-9]+)?$ ]] || return 1
   printf '%s\n' "${value}"
 }
 
@@ -205,16 +205,6 @@ new_span_id() {
   local id
   id="$(tr -d '-' </proc/sys/kernel/random/uuid)"
   printf '%s' "${id:0:16}"
-}
-
-trace_service_names() {
-  jq -r '.. | objects | select(.key? == "service.name") | .value.stringValue? // empty' "$1" | sort -u
-}
-
-has_service() {
-  local services="$1"
-  local prefix="$2"
-  grep -Eq "^${prefix}([.]bookinfo)?$" <<<"${services}"
 }
 
 echo "== E2E 0/8: local port-forward readiness =="
@@ -253,8 +243,10 @@ echo "== E2E 3/8: normal 10% sampling traffic =="
 # historical counter could otherwise let stale traffic satisfy the metrics gate.
 metric_token="$(oc create token kiali-service-account -n istio-system --duration=10m)"
 metric_before_file="${work}/thanos-before.json"
-metric_before="$(query_thanos_bookinfo_metric "${metric_token}" "${metric_before_file}" || echo 0)"
-[[ "${metric_before}" =~ ^[0-9]+([.][0-9]+)?$ ]] || metric_before=0
+metric_before="$(query_thanos_bookinfo_metric "${metric_token}" "${metric_before_file}")" || {
+  echo 'ERROR: cannot read the waypoint metrics baseline; refusing to infer a zero value.' >&2
+  exit 1
+}
 echo "Bookinfo istio_requests_total baseline: ${metric_before}"
 
 normal_start="$(( $(date +%s) - 2 ))"
@@ -327,7 +319,7 @@ dump_trace_failure_diagnostics() {
   diag_code="$(curl -q --silent --show-error --insecure --get \
     -o "${diag_file}" -w '%{http_code}' \
     -H "Authorization: Bearer ${token}" \
-    --data-urlencode 'q={ resource.service.name = "istio-ingressgateway.bookinfo" }' \
+    --data-urlencode 'q={ resource.service.name = "bookinfo-ambient-istio.bookinfo" }' \
     --data-urlencode 'limit=20' \
     --data-urlencode "start=${start}" \
     --data-urlencode "end=${now}" \
@@ -354,6 +346,7 @@ for trace_id in "${forced_trace_ids[@]}"; do
   complete=0
   last_code=""
   services=""
+  destinations=""
 
   while (( SECONDS < deadline )); do
     last_code="$(curl -q --silent --show-error --insecure \
@@ -363,10 +356,8 @@ for trace_id in "${forced_trace_ids[@]}"; do
 
     if [[ "${last_code}" == "200" ]] && jq -e '.batches? | length > 0' "${trace_file}" >/dev/null 2>&1; then
       services="$(trace_service_names "${trace_file}")"
-      if has_service "${services}" istio-ingressgateway &&
-         has_service "${services}" productpage &&
-         has_service "${services}" details &&
-         has_service "${services}" reviews; then
+      destinations="$(trace_waypoint_destinations "${trace_file}")"
+      if trace_has_bookinfo_chain "${trace_file}"; then
         complete=1
         break
       fi
@@ -384,16 +375,18 @@ for trace_id in "${forced_trace_ids[@]}"; do
     echo "Last HTTP code: ${last_code:-none}" >&2
     echo "Observed services:" >&2
     printf '%s\n' "${services:-<none>}" >&2
+    echo "Observed waypoint destinations:" >&2
+    printf '%s\n' "${destinations:-<none>}" >&2
     [[ ! -s "${trace_file}" ]] || head -100 "${trace_file}" >&2
     dump_trace_failure_diagnostics
     exit 1
   fi
 
   found_count=$((found_count + 1))
-  if has_service "${services}" ratings; then
+  if has_service "${destinations}" ratings; then
     full_chain_count=$((full_chain_count + 1))
   fi
-  echo "OK   trace ${trace_id}: $(tr '\n' ',' <<<"${services}" | sed 's/,$//')"
+  echo "OK   trace ${trace_id} destinations: $(tr '\n' ',' <<<"${destinations}" | sed 's/,$//')"
 done
 
 [[ "${found_count}" -eq "${E2E_FORCED_TRACES}" ]] || {
@@ -440,7 +433,7 @@ while (( SECONDS < deadline )); do
   search_code="$(curl -q --silent --show-error --insecure --get \
     -o "${random_response}" -w '%{http_code}' \
     -H "Authorization: Bearer ${token}" \
-    --data-urlencode 'q={ resource.service.name = "istio-ingressgateway.bookinfo" }' \
+    --data-urlencode 'q={ resource.service.name = "bookinfo-ambient-istio.bookinfo" }' \
     --data-urlencode 'limit=100' \
     --data-urlencode "start=${normal_start}" \
     --data-urlencode "end=${normal_end}" \
@@ -507,5 +500,5 @@ echo
 if (( FAST )); then
   echo "E2E PASS (fast): Bookinfo application, ingress routing, forced and random tracing, OTel -> Tempo, secured Tempo query, and UWM/Thanos metrics are validated; exhaustive resource readiness snapshots were intentionally skipped."
 else
-  echo "E2E PASS: Bookinfo application, ingress routing, sidecar propagation, forced and random tracing, OTel -> Tempo, secured Tempo query, and UWM/Thanos metrics are all validated."
+  echo "E2E PASS: Bookinfo application, ambient ingress and waypoint routing, forced and random tracing, OTel -> Tempo, secured Tempo query, and UWM/Thanos metrics are all validated."
 fi

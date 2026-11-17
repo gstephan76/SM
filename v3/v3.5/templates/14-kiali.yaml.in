@@ -24,6 +24,7 @@ spec:
       enabled: true
       provider: tempo
       use_grpc: false
+      use_waypoint_name: true
       namespace_selector: true
       internal_url: https://tempo-mesh-gateway.tempo.svc.cluster.local:8080/api/traces/v1/mesh/tempo
       external_url: __OPENSHIFT_CONSOLE_URL__

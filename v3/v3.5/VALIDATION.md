@@ -1,113 +1,36 @@
-# Validation and acceptance criteria
+# Ambient validation
 
-This deployment uses layered validation so that a resource being accepted by the Kubernetes API is never treated as proof that the data path works.
+The ambient port is not yet qualified on the target cluster. A resource being
+accepted by Kubernetes does not establish that the mesh data path works.
 
-## Kubernetes/OpenShift release-tolerant readiness
+The intended validation layers are:
 
-All runtime readiness checks are implemented centrally in `scripts/lib-common.sh` and consumed by `apply.sh` and `postcheck.sh`. `validate.sh` runs a synthetic compatibility self-test before rendering manifests. The readiness layer intentionally discovers/normalizes Kubernetes status shapes instead of assuming a single release representation:
+1. **Local checks:** shell syntax, YAML parsing, and
+   `scripts/test-ambient-trace.sh`. The fixture rejects missing service hops,
+   non-waypoint attributes, sidecar-injected application pods and an ingress
+   without explicit HBONE configuration. These are synthetic checks.
+2. **Prerequisites and API validation:** the operator versions and CRDs,
+   OpenShift 5.0, ODF/NooBaa health, permissions, supported mesh configuration,
+   policy inventory and server-side dry runs. Bootstrap namespace checks can
+   be deferred until namespaces exist; full server validation is then required.
+3. **Readiness:** ambient Istio and CNI with native nftables, ready ZTunnel,
+   sidecar-free Bookinfo pods registered with HBONE, programmed Gateway API
+   resources, accepted HTTPRoute, ready endpoints, correct namespace and
+   ingress-waypoint labels, Route admission, metrics monitors, Kiali access to
+   ztunnel, and the existing Tempo and OTel health and authorization checks.
+4. **Traffic and telemetry:** external and internal Bookinfo requests, exact
+   W3C trace-ID retrieval, ingress and waypoint trace resources, waypoint span
+   destination attributes for productpage, details and reviews, and ratings on
+   at least one trace. The test also uses an unsampled negative control,
+   checks the collector for export errors, and requires the waypoint's
+   `istio_requests_total` counter to increase after generated traffic.
 
-- Istio sidecars are accepted from either `status.containerStatuses` (classic sidecar) or `status.initContainerStatuses` (Kubernetes native sidecar).
-- Services prefer `discovery.k8s.io/EndpointSlice` ready, non-terminating addresses and fall back to core/v1 `Endpoints` when EndpointSlice is unavailable or not populated.
-- Deployments are gated on current `metadata.generation`, `status.observedGeneration`, updated replicas, available replicas, and zero unavailable replicas instead of relying only on CLI rollout text.
-- Generic operator CR readiness accepts `observedGeneration` at either the condition or top-level status and explicitly reports when the operator does not publish a generation fence.
-- Pod readiness requires a non-deleting `Running` pod with `Ready=True`; aggregate namespace checks use the same predicate.
+The Istio 1.31 source defines `istio.destination_canonical_service` for waypoint
+spans. Actual tag values, the gateway and waypoint resource names, monitoring
+labels, tracing sampling behavior and full-chain correlation remain unverified
+on this OpenShift 5.0 stack. No end-to-end acceptance claim can be made until
+those checks pass on a qualified deployment. See [AMBIENT-MIGRATION.md](AMBIENT-MIGRATION.md)
+for the cutover limitations and manual recovery path.
 
-The synthetic filter check covers both classic and native Istio sidecar representations so this compatibility contract is tested on every normal `validate.sh` invocation.
-
-## Readiness model
-
-| Resource | Required gate | Downstream proof |
-|---|---|---|
-| `IstioCNI/default` | `Ready=True`; current generation when the operator publishes `observedGeneration` | CNI/Istio workloads and Bookinfo sidecar injection |
-| `Istio/default` | `Ready=True`; current generation when available | Bookinfo ingress and sidecar traffic |
-| `Telemetry/mesh-observability` | object exists and selects `otel-tracing`, 10% sampler | exact Tempo traces and random-sampling search |
-| Istio `ServiceMonitor`/`PodMonitor` | objects exist | Thanos counter increases during E2E |
-| `ObjectBucketClaim/tempo-odf` | `phase=Bound` | Tempo traces remain queryable through the secured gateway |
-| `TempoStack/mesh` | `Ready=True` | all Tempo pods Ready, gateway has endpoints, exact trace lookup succeeds |
-| `OpenTelemetryCollector/otel` | `Ready=True` | generated deployment Available, service endpoints Ready, no export errors |
-| `Kiali/kiali` | `Successful=True` | generated deployment Available and RBAC/SAR checks pass |
-| `OSSMConsole/ossmconsole` | `Successful=True` | `ConsolePlugin/ossmconsole` backend has ready endpoints |
-| `UIPlugin/distributed-tracing` | `Available=True` | OpenShift Observe -> Traces integration enabled |
-| Bookinfo Deployments | rollout Available | service endpoints, injected sidecars, external and in-mesh HTTP checks |
-| Bookinfo Route | `Admitted=True` | `/productpage` returns expected content |
-
-If a CR implementation does not expose `observedGeneration`, the scripts report that explicitly instead of printing a false `observedGeneration=0` claim.
-
-## Fresh-cluster validation
-
-A Kubernetes server-side dry-run cannot validate a namespaced object if that Namespace does not exist. `validate.sh` therefore allows only that specific bootstrap case to defer to strict client validation. `apply.sh` then creates the target Namespaces and reruns the full server-side validation before any substantive mesh/observability resource is applied.
-
-## ODF 4.22 standalone object storage acceptance
-
-The ODF bootstrap is optional and opt-in (`BOOTSTRAP_MCG=1`), but the default
-storage health check is strict (`CHECK_MCG_HEALTH=1`). Creating only the
-`objectbucketclaims.objectbucket.io` CRD or NooBaa StorageClass cannot
-satisfy it: NooBaa, the default PV-backed BackingStore and BucketClass must be
-`Ready`, and at least one backing-store `gp3-csi` PVC must be `Bound`.
-`StorageCluster` may still report `Progressing` during independent cloud
-credential reconciliation; that condition is warned about only when the
-actual PV-backed data path is healthy. A failed AWS CredentialsRequest does
-not supersede this direct data-path check. OBC must still become `Bound`
-when `apply.sh` provisions Tempo.
-
-For exact Bookinfo traces, positive W3C requests additionally use
-`x-client-trace-id` to exercise Envoy client-directed sampling at 100% while
-keeping random sampling at 10%. The no-sample negative control is unchanged;
-all per-trace service-chain and ratings assertions remain mandatory. E2E
-preflights both local port-forwards before application traffic, and an occupied
-local port causes an actionable failure rather than a late-stage surprise.
-
-## Bookinfo E2E
-
-The final E2E is intentionally correlated to traffic generated by the test itself. It uses known W3C `traceparent` trace IDs with trace-flags `01` for positive controls, a trace-flags `00` unsampled negative control, a bounded random-sampling window, and a before/after UWM/Thanos counter delta. A positive historical metric or an unrelated trace cannot satisfy these gates. Exact-trace failures dump current OTel collector logs and a recent Tempo Bookinfo search before exiting.
-
-Default controls:
-
-```bash
-E2E_REQUESTS=200
-E2E_FORCED_TRACES=12
-E2E_TRACE_WAIT_SECONDS=180
-E2E_MAX_HTTP_FAILURES=0
-E2E_MIN_RANDOM_TRACES=5
-E2E_MIN_METRIC_DELTA=100
-```
-
-`RUN_E2E=0` is only for an intentionally partial deployment that will be validated separately.
-
-For iterative data-path testing after a deployment has already passed the full
-readiness checks, `./scripts/e2e-check.sh --fast` skips both exhaustive
-`postcheck.sh` snapshots and starts the E2E sequence immediately. The fast mode
-does not skip the E2E traffic, W3C trace, Tempo, OTel, or UWM/Thanos assertions,
-and it retains the required Tempo authorization checks. It is a debugging and
-rerun convenience, not a replacement for the full deployment acceptance path;
-plain `e2e-check.sh` and `apply.sh` retain exhaustive pre/post readiness
-validation.
-
-## Console integrations
-
-Two independent console plugins are expected:
-
-- OpenShift Service Mesh Console (OSSMC): `OSSMConsole/ossmconsole`; adds the **Service Mesh** navigation.
-- Cluster Observability distributed tracing UI: `UIPlugin/distributed-tracing`; adds **Observe -> Traces**.
-
-The OSSMC plugin supports a single Kiali instance. The default manifest points it explicitly at `istio-system/kiali:20001`.
-
-## Kubernetes/OpenShift release compatibility contract
-
-The canonical scripts deliberately avoid assumptions that changed across Kubernetes/OpenShift releases:
-
-- Istio sidecar readiness accepts both classic `status.containerStatuses[]` and Kubernetes native-sidecar `status.initContainerStatuses[]`.
-- Service readiness prefers `discovery.k8s.io/EndpointSlice` and falls back to core `Endpoints`.
-- Operator reconciliation accepts `observedGeneration` either on the matching condition or at `status.observedGeneration`; when an operator publishes neither, the script reports that the generation fence is unavailable instead of inventing `0`.
-- Every generic resource wait uses a canonical `TYPE/NAME` reference, splits it, and invokes `oc get TYPE NAME`. Fully qualified API resource types are therefore safe.
-- Istio `Gateway` and `VirtualService` are always addressed as `gateways.networking.istio.io` and `virtualservices.networking.istio.io`. This is mandatory when Kubernetes Gateway API (`gateways.gateway.networking.k8s.io`) is installed because the bare `gateway` alias can resolve to the wrong API group.
-- Readiness API calls use a bounded `--request-timeout` (`KUBE_API_REQUEST_TIMEOUT`, default `15s`) so a single stalled API request cannot bypass the higher-level readiness deadline.
-- Bookinfo ingress is declared as a `ClusterIP` Service plus an OpenShift Route. The canonical postcheck verifies the Service `http2` port maps `80 -> 8080` and that the Route targets `istio-ingressgateway:http2`; external exposure does not depend on changing the Service to `LoadBalancer` or `NodePort`.
-- The Bookinfo Istio `Gateway` uses the compound selector `istio=ingressgateway,app.kubernetes.io/component=bookinfo-ingressgateway`. The postcheck enforces that selector so wildcard `*:8080` Gateways in other namespaces cannot select the same ingress workload.
-- `apply.sh` applies the Istio Gateway/VirtualService and OpenShift Route before verifying them, so a verification failure cannot leave a half-declared ingress path.
-
-`validate.sh` runs local compatibility self-tests for these predicates and rejects ambiguous Gateway/VirtualService usage in the canonical apply/postcheck/E2E scripts before any mutation.
-
-## Service Mesh 3.5 compatibility gate
-
-Strict: Service Mesh 3.5.x, Kiali 2.33.x, Istio 1.31-family, Tempo 0.22.x, OTel 0.152.x/0.158.x. Use `--relax-version-checks` only to warn on version-family drift. All API, storage, security and end-to-end gates remain mandatory.
+The prior sidecar acceptance contract is retained in
+[SIDECAR-VALIDATION-HISTORY.md](SIDECAR-VALIDATION-HISTORY.md).

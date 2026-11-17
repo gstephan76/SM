@@ -1,0 +1,9 @@
+apiVersion: sailoperator.io/v1
+kind: ZTunnel
+metadata:
+  name: default
+spec:
+  namespace: ztunnel
+  targetRef:
+    kind: Istio
+    name: default

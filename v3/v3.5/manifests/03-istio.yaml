@@ -5,7 +5,14 @@ metadata:
 spec:
   namespace: istio-system
   version: v1.31-latest
+  profile: ambient
   values:
+    global:
+      nativeNftables: true
+    pilot:
+      trustedZtunnelNamespace: ztunnel
+      env:
+        ENABLE_INGRESS_WAYPOINT_ROUTING: "true"
     meshConfig:
       discoverySelectors:
       - matchLabels:

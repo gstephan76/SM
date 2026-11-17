@@ -51,7 +51,7 @@ need_csv() {
   fi
 }
 
-for cmd in oc sed base64 curl jq awk; do
+for cmd in oc istioctl sed base64 curl jq awk; do
   need_cmd "${cmd}"
 done
 ((missing == 0)) || {
@@ -62,10 +62,10 @@ done
 oc whoami >/dev/null
 
 ocp_version="$(oc get clusterversion version -o jsonpath='{.status.desired.version}' 2>/dev/null || true)"
-if [[ "${ocp_version}" =~ ^4[.]22[.][0-9]+$ ]]; then
+if [[ "${ocp_version}" =~ ^5[.]0[.][0-9]+$ ]]; then
   echo "OK   OpenShift ${ocp_version}"
 else
-  echo "MISS expected OpenShift 4.22.x; cluster reports '${ocp_version:-unknown}'"
+  echo "MISS expected OpenShift 5.0.x; cluster reports '${ocp_version:-unknown}'"
   missing=1
 fi
 
@@ -85,6 +85,7 @@ fi
 for crd in \
   istios.sailoperator.io \
   istiocnis.sailoperator.io \
+  ztunnels.sailoperator.io \
   telemetries.telemetry.istio.io \
   servicemonitors.monitoring.coreos.com \
   podmonitors.monitoring.coreos.com \
@@ -93,6 +94,8 @@ for crd in \
   kialis.kiali.io \
   gateways.networking.istio.io \
   virtualservices.networking.istio.io \
+  gateways.gateway.networking.k8s.io \
+  httproutes.gateway.networking.k8s.io \
   objectbucketclaims.objectbucket.io; do
   need_crd "${crd}"
 done

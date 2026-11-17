@@ -637,76 +637,111 @@ require_selector_pods_ready() {
   return 1
 }
 
-require_istio_bookinfo_routing() {
-  local namespace="${1:-bookinfo}"
-  local timeout_seconds="${2:-120}"
-  local gateway_ref="gateways.networking.istio.io/bookinfo-gateway"
-  local virtualservice_ref="virtualservices.networking.istio.io/bookinfo"
-  local gateway_json vs_json
-  local selector component port protocol gateway_link destination_host destination_port
+trace_service_names() {
+  jq -r '.batches[]?.resource.attributes[]? | select(.key == "service.name") | .value.stringValue? // empty' "$1" | sort -u
+}
 
-  wait_resource_exists "${gateway_ref}" "${namespace}" "${timeout_seconds}"
-  wait_resource_exists "${virtualservice_ref}" "${namespace}" "${timeout_seconds}"
+trace_waypoint_destinations() {
+  jq -r '.batches[]? |
+    select(any(.resource.attributes[]?; .key == "service.name" and
+      (.value.stringValue == "waypoint" or .value.stringValue == "waypoint.bookinfo"))) |
+    .. | objects | select(.key? == "istio.destination_canonical_service") |
+    .value.stringValue? // empty' "$1" | sort -u
+}
 
-  gateway_json="$(oc_get_resource_ref "${gateway_ref}" "${namespace}" -o json)"
-  vs_json="$(oc_get_resource_ref "${virtualservice_ref}" "${namespace}" -o json)"
+has_service() {
+  local services="$1" prefix="$2"
+  grep -Eq "^${prefix}([.]bookinfo)?$" <<<"${services}"
+}
 
-  selector="$(jq -r '.spec.selector.istio // ""' <<<"${gateway_json}")"
-  component="$(jq -r '.spec.selector["app.kubernetes.io/component"] // ""' <<<"${gateway_json}")"
-  port="$(jq -r '[.spec.servers[]? | select(.port.number == 8080)] | length' <<<"${gateway_json}")"
-  protocol="$(jq -r '[.spec.servers[]? | select(.port.number == 8080 and .port.protocol == "HTTP")] | length' <<<"${gateway_json}")"
-  gateway_link="$(jq -r '[.spec.gateways[]? | select(. == "bookinfo-gateway" or . == "bookinfo/bookinfo-gateway")] | length' <<<"${vs_json}")"
-  destination_host="$(jq -r '[.spec.http[]?.route[]?.destination.host | select(. == "productpage")] | length' <<<"${vs_json}")"
-  destination_port="$(jq -r '[.spec.http[]?.route[]?.destination | select(.host == "productpage" and .port.number == 9080)] | length' <<<"${vs_json}")"
+trace_has_bookinfo_chain() {
+  local file="$1" services destinations
+  services="$(trace_service_names "${file}")"
+  destinations="$(trace_waypoint_destinations "${file}")"
+  has_service "${services}" bookinfo-ambient-istio &&
+    has_service "${services}" waypoint &&
+    has_service "${destinations}" productpage &&
+    has_service "${destinations}" details &&
+    has_service "${destinations}" reviews
+}
 
-  if [[ "${selector}" == "ingressgateway" &&
-        "${component}" == "bookinfo-ingressgateway" ]] &&
-     (( port > 0 && protocol > 0 && gateway_link > 0 && destination_host > 0 && destination_port > 0 )); then
-    echo "OK   Istio Bookinfo routing: isolated Gateway selector/8080 HTTP and VirtualService -> productpage:9080"
-    return 0
-  fi
-
-  echo "ERROR: Istio Bookinfo Gateway/VirtualService semantic contract is not satisfied." >&2
-  echo "selector=${selector:-<missing>} component=${component:-<missing>} port8080=${port} http8080=${protocol} gatewayLink=${gateway_link} destinationHost=${destination_host} destinationPort=${destination_port}" >&2
-  oc_get_resource_ref "${gateway_ref}" "${namespace}" -o yaml >&2 || true
-  oc_get_resource_ref "${virtualservice_ref}" "${namespace}" -o yaml >&2 || true
+require_ambient_bookinfo_routing() {
+  local namespace="${1:-bookinfo}" timeout_seconds="${2:-180}"
+  local deadline=$((SECONDS + timeout_seconds)) json
+  wait_cr_condition "gateways.gateway.networking.k8s.io/waypoint" "${namespace}" Programmed "${timeout_seconds}"
+  wait_cr_condition "gateways.gateway.networking.k8s.io/bookinfo-ambient" "${namespace}" Programmed "${timeout_seconds}"
+  while (( SECONDS < deadline )); do
+    json="$(oc_get httproutes.gateway.networking.k8s.io bookinfo-ambient -n "${namespace}" -o json 2>/dev/null || true)"
+    if [[ -n "${json}" ]] && jq -e '
+      .metadata.generation as $generation |
+      any(.spec.parentRefs[]?; .name == "bookinfo-ambient") and
+      any(.spec.rules[]?.backendRefs[]?; .name == "productpage" and .port == 9080) and
+      any(.status.parents[]?;
+        .parentRef.name == "bookinfo-ambient" and
+        any(.conditions[]?; .type == "Accepted" and .status == "True" and .observedGeneration == $generation) and
+        any(.conditions[]?; .type == "ResolvedRefs" and .status == "True" and .observedGeneration == $generation))
+    ' <<<"${json}" >/dev/null 2>&1; then
+      require_service_endpoints "${namespace}" bookinfo-ambient-istio "${timeout_seconds}"
+      echo "OK   ambient Gateway and HTTPRoute are programmed with resolved references"
+      return 0
+    fi
+    sleep 2
+  done
+  echo "ERROR: Bookinfo HTTPRoute was not accepted with resolved references for its current generation." >&2
   return 1
 }
 
+gateway_hbone_enabled_from_json() {
+  jq -e '(.items | length) > 0 and all(.items[];
+    any(.spec.containers[]?; .name == "istio-proxy" and
+      any(.env[]?; .name == "ISTIO_META_ENABLE_HBONE" and .value == "true")))' <<<"$1" >/dev/null 2>&1
+}
 
-require_bookinfo_ingress_contract() {
-  local namespace="${1:-bookinfo}"
-  local service_ref="services/istio-ingressgateway"
-  local route_ref="routes.route.openshift.io/istio-ingressgateway"
-  local service_json route_json
-  local service_type service_port service_target route_kind route_service route_port
+ambient_pods_ready_from_json() {
+  jq -e '
+      (.items | length) > 0 and
+      all(.items[]; .status.phase == "Running" and
+        any(.status.conditions[]?; .type == "Ready" and .status == "True") and
+        all((.spec.containers // [])[]; .name != "istio-proxy") and
+        all((.spec.initContainers // [])[]; .name != "istio-proxy"))
+    ' <<<"$1" >/dev/null 2>&1
+}
 
-  wait_resource_exists "${service_ref}" "${namespace}" 60
-  wait_resource_exists "${route_ref}" "${namespace}" 60
+require_ambient_pods() {
+  local namespace="$1" selector="$2" timeout_seconds="${3:-180}"
+  local deadline=$((SECONDS + timeout_seconds)) json
+  while (( SECONDS < deadline )); do
+    json="$(oc_get pods -n "${namespace}" -l "${selector}" -o json 2>/dev/null || true)"
+    if [[ -n "${json}" ]] && ambient_pods_ready_from_json "${json}"; then
+      echo "OK   ${namespace} selector=${selector}: ready application pods have no Istio sidecar"
+      return 0
+    fi
+    sleep 2
+  done
+  echo "ERROR: ${namespace} selector=${selector} does not have ready sidecar-free pods." >&2
+  return 1
+}
 
-  service_json="$(oc_get_resource_ref "${service_ref}" "${namespace}" -o json)"
-  route_json="$(oc_get_resource_ref "${route_ref}" "${namespace}" -o json)"
-
-  service_type="$(jq -r '.spec.type // "ClusterIP"' <<<"${service_json}")"
-  service_port="$(jq -r '[.spec.ports[]? | select(.name == "http2" and .port == 80)] | length' <<<"${service_json}")"
-  service_target="$(jq -r '[.spec.ports[]? | select(.name == "http2" and ((.targetPort == 8080) or (.targetPort == "8080")))] | length' <<<"${service_json}")"
-  route_kind="$(jq -r '.spec.to.kind // "Service"' <<<"${route_json}")"
-  route_service="$(jq -r '.spec.to.name // ""' <<<"${route_json}")"
-  route_port="$(jq -r '.spec.port.targetPort // "" | tostring' <<<"${route_json}")"
-
-  if [[ "${service_type}" == "ClusterIP" &&
-        "${route_kind}" == "Service" &&
-        "${route_service}" == "istio-ingressgateway" &&
-        "${route_port}" == "http2" ]] &&
-     (( service_port > 0 && service_target > 0 )); then
-    echo "OK   Bookinfo ingress exposure: ClusterIP Service http2:80->8080 and Route -> istio-ingressgateway:http2"
-    return 0
-  fi
-
-  echo "ERROR: Bookinfo ingress Service/Route semantic contract is not satisfied." >&2
-  echo "serviceType=${service_type:-<missing>} servicePort80=${service_port} serviceTarget8080=${service_target} routeKind=${route_kind:-<missing>} routeService=${route_service:-<missing>} routePort=${route_port:-<missing>}" >&2
-  oc_get_resource_ref "${service_ref}" "${namespace}" -o yaml >&2 || true
-  oc_get_resource_ref "${route_ref}" "${namespace}" -o yaml >&2 || true
+require_bookinfo_hbone() {
+  local timeout_seconds="${1:-180}" deadline=$((SECONDS + ${1:-180}))
+  local pods output pod missing
+  command -v istioctl >/dev/null || { echo 'ERROR: istioctl is required to verify ambient workload registration.' >&2; return 1; }
+  while (( SECONDS < deadline )); do
+    pods="$(oc_get pods -n bookinfo -l 'app in (details,ratings,reviews,productpage)' -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)"
+    output="$(istioctl ztunnel-config workloads --namespace ztunnel --workload-namespace bookinfo 2>/dev/null || true)"
+    missing=0
+    [[ -n "${pods}" && -n "${output}" ]] || missing=1
+    while IFS= read -r pod; do
+      [[ -z "${pod}" ]] && continue
+      awk -v pod="${pod}" '$1 == "bookinfo" && $2 == pod && $NF == "HBONE" { found=1 } END { exit !found }' <<<"${output}" || missing=1
+    done <<<"${pods}"
+    if (( missing == 0 )); then
+      echo 'OK   all Bookinfo application pods are registered with HBONE'
+      return 0
+    fi
+    sleep 2
+  done
+  echo "ERROR: Bookinfo workloads did not all register with HBONE within ${timeout_seconds}s." >&2
   return 1
 }
 

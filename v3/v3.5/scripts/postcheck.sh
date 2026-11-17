@@ -32,6 +32,15 @@ wait_for_labeled_resources() {
 echo "Checking Sail control plane CR readiness..."
 wait_cr_condition "istiocnis.sailoperator.io/default" istio-cni Ready 180
 wait_cr_condition "istios.sailoperator.io/default" istio-system Ready 180
+wait_cr_condition "ztunnels.sailoperator.io/default" ztunnel Ready 180
+wait_resource_exists "podmonitors.monitoring.coreos.com/istio-ztunnel-monitor" ztunnel 60
+for resource in istios.sailoperator.io istiocnis.sailoperator.io; do
+  [[ "$(oc_get "${resource}" default -o jsonpath='{.spec.profile}')" == ambient &&
+     "$(oc_get "${resource}" default -o jsonpath='{.spec.values.global.nativeNftables}')" == true ]] || {
+    echo "ERROR: ${resource}/default does not use the ambient profile and native nftables." >&2
+    exit 1
+  }
+done
 
 echo "Checking Telemetry and Istio metrics monitor CRs..."
 wait_resource_exists "telemetries.telemetry.istio.io/mesh-observability" istio-system 60
@@ -106,6 +115,10 @@ require_tempo_sar \
   echo "ERROR: kiali-service-account cannot read the mesh namespace." >&2
   exit 1
 }
+[[ "$(oc auth can-i get pods --as=system:serviceaccount:istio-system:kiali-service-account -n ztunnel)" == "yes" ]] || {
+  echo "ERROR: kiali-service-account cannot read the ztunnel namespace." >&2
+  exit 1
+}
 wait_resource_exists "clusterrolebindings.rbac.authorization.k8s.io/kiali-monitoring-rbac-v34" "" 60
 wait_resource_exists "clusterrolebindings.rbac.authorization.k8s.io/tempo-mesh-traces-reader-kiali" "" 60
 wait_cr_condition "kialis.kiali.io/kiali" istio-system Successful 180
@@ -127,6 +140,10 @@ console_url="https://$(oc_get route console -n openshift-console -o jsonpath='{.
   echo "ERROR: Kiali tempo_config.url_format is not openshift." >&2
   exit 1
 }
+[[ "$(oc_get kiali kiali -n istio-system -o jsonpath='{.spec.external_services.tracing.use_waypoint_name}')" == "true" ]] || {
+  echo 'ERROR: Kiali is not configured to query traces by waypoint name.' >&2
+  exit 1
+}
 
 
 if [[ "${ENABLE_MESH_CONSOLE:-1}" == "1" ]]; then
@@ -141,19 +158,35 @@ if [[ "${ENABLE_TRACING_UI:-1}" == "1" ]]; then
 fi
 
 if [[ "${DEPLOY_BOOKINFO:-1}" == "1" ]]; then
-  echo "Checking Bookinfo application, sidecars, gateway CRs, and Route..."
-  for deployment in details-v1 ratings-v1 reviews-v1 reviews-v2 reviews-v3 productpage-v1 istio-ingressgateway; do
+  echo "Checking ambient Bookinfo application, waypoint, Gateway API ingress, and Route..."
+  namespace_json="$(oc_get namespace bookinfo -o json)"
+  jq -e '.metadata.labels["istio.io/dataplane-mode"] == "ambient" and
+         .metadata.labels["istio.io/use-waypoint"] == "waypoint" and
+         (.metadata.labels["istio.io/rev"] // "") == "" and
+         .metadata.labels["istio-injection"] != "enabled"' <<<"${namespace_json}" >/dev/null || {
+    echo 'ERROR: Bookinfo namespace does not have the expected ambient labels.' >&2
+    exit 1
+  }
+  [[ "$(oc_get service productpage -n bookinfo -o jsonpath='{.metadata.labels.istio\.io/ingress-use-waypoint}')" == true ]] || {
+    echo 'ERROR: productpage does not opt ingress traffic into its waypoint.' >&2
+    exit 1
+  }
+  for deployment in details-v1 ratings-v1 reviews-v1 reviews-v2 reviews-v3 productpage-v1; do
     wait_deployment_available bookinfo "${deployment}" 120
   done
-  for service in details ratings reviews productpage istio-ingressgateway; do
+  for service in details ratings reviews productpage bookinfo-ambient-istio; do
     require_service_endpoints bookinfo "${service}" 120
   done
   for app in details ratings reviews productpage; do
-    require_selector_pods_container bookinfo "app=${app}" istio-proxy 120
+    require_ambient_pods bookinfo "app=${app}" 120
   done
-  require_istio_bookinfo_routing bookinfo 60
+  require_bookinfo_hbone 180
+  require_ambient_bookinfo_routing bookinfo 120
   wait_route_admitted bookinfo istio-ingressgateway 120
-  require_bookinfo_ingress_contract bookinfo
+  [[ "$(oc_get route istio-ingressgateway -n bookinfo -o jsonpath='{.spec.to.name}')" == "bookinfo-ambient-istio" ]] || {
+    echo "ERROR: Bookinfo Route does not target the ambient ingress Service." >&2
+    exit 1
+  }
 fi
 
 echo

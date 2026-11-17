@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Idempotent ODF 4.22 standalone MCG bootstrap for the v3.5 Tempo OBC path.
+# ODF 4.22 standalone MCG bootstrap for the v3.5 Tempo OBC path.
 # Never deletes ODF resources, PVCs, buckets, or AWS credentials.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -24,9 +24,10 @@ timeout="${MCG_TIMEOUT_SECONDS:-1200}"
 echo '== ODF 4.22 / standalone MCG bootstrap =='
 oc whoami >/dev/null
 ocp_version="$(oc get clusterversion version -o jsonpath='{.status.desired.version}' 2>/dev/null || true)"
-[[ "${ocp_version}" =~ ^4[.]22[.][0-9]+$ ]] || {
-  echo "ERROR: ODF bootstrap targets OCP 4.22, got ${ocp_version:-unknown}" >&2; exit 1;
+[[ "${ocp_version}" =~ ^5[.]0[.][0-9]+$ ]] || {
+  echo "ERROR: ODF bootstrap targets OCP 5.0, got ${ocp_version:-unknown}" >&2; exit 1;
 }
+echo 'NOTE: ODF 4.22 on OCP 5.0 requires support qualification for this environment.'
 
 # Preserve an already initialized gateway and its bound objects.
 if "${ROOT}/storage/odf/check-mcg.sh" --quick >/dev/null 2>&1; then

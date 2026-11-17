@@ -5,8 +5,8 @@ metadata:
 spec:
   to:
     kind: Service
-    name: istio-ingressgateway
+    name: bookinfo-ambient-istio
     weight: 100
   port:
-    targetPort: http2
+    targetPort: http
   wildcardPolicy: None

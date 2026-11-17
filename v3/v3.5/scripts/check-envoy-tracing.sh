@@ -9,8 +9,8 @@ load_stack_env "${ROOT}"
 for cmd in oc jq; do
   command -v "${cmd}" >/dev/null || { echo "ERROR: missing ${cmd}" >&2; exit 1; }
 done
-GW="$(oc -n bookinfo get pods -l istio=ingressgateway -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
-[[ -n "${GW}" ]] || { echo 'ERROR: no bookinfo pod labeled istio=ingressgateway.' >&2; exit 1; }
+GW="$(oc -n bookinfo get pods -l gateway.networking.k8s.io/gateway-name=bookinfo-ambient -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+[[ -n "${GW}" ]] || { echo 'ERROR: no Bookinfo Gateway API ingress pod.' >&2; exit 1; }
 echo "Gateway pod: ${GW}"
 config="$(mktemp)"
 trap 'rm -f "${config}"' EXIT

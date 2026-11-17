@@ -5,3 +5,7 @@ metadata:
 spec:
   namespace: istio-cni
   version: v1.31-latest
+  profile: ambient
+  values:
+    global:
+      nativeNftables: true

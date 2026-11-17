@@ -8,20 +8,28 @@ load_stack_env "${ROOT}"
 parse_version_flags "$@"
 
 CURRENT_APPLY_STEP="startup"
+AMBIENT_MIGRATION_STARTED=0
 apply_error_trap() {
   local rc=$?
   trap - ERR
   echo "ERROR: apply.sh failed during '${CURRENT_APPLY_STEP}' (rc=${rc}, line=${BASH_LINENO[0]:-unknown})." >&2
   exit "${rc}"
 }
+apply_exit_trap() {
+  local rc=$?
+  if (( rc != 0 )) && [[ "${AMBIENT_MIGRATION_STARTED}" == "1" ]]; then
+    echo "Bookinfo migration may be partial. See ${ROOT}/AMBIENT-MIGRATION.md for manual recovery." >&2
+  fi
+}
 begin_apply_step() {
   CURRENT_APPLY_STEP="$1"
   echo "== ${CURRENT_APPLY_STEP} =="
 }
 trap apply_error_trap ERR
+trap apply_exit_trap EXIT
 
 namespace_bootstrap_required=0
-for ns in istio-system istio-cni tempo bookinfo; do
+for ns in istio-system istio-cni ztunnel tempo bookinfo; do
   if ! oc_get namespace "${ns}" >/dev/null 2>&1; then
     namespace_bootstrap_required=1
     break
@@ -39,7 +47,11 @@ fi
 
 begin_apply_step "2. Namespaces"
 oc_apply -f "${ROOT}/manifests/00-namespaces.yaml"
-for ns in istio-system istio-cni tempo bookinfo; do
+if ! oc_get namespace bookinfo >/dev/null 2>&1; then
+  oc create namespace bookinfo
+  oc label namespace bookinfo istio-discovery=enabled
+fi
+for ns in istio-system istio-cni ztunnel tempo bookinfo; do
   wait_namespace_active "${ns}" 120
 done
 
@@ -58,6 +70,8 @@ if [[ "${APPLY_MESH_BASE:-0}" == "1" ]]; then
 
   oc_apply -f "${ROOT}/manifests/03-istio.yaml"
   wait_cr_condition "istios.sailoperator.io/default" istio-system Ready 600
+  oc_apply -f "${ROOT}/manifests/03-ztunnel.yaml"
+  wait_cr_condition "ztunnels.sailoperator.io/default" ztunnel Ready 600
 else
   oc_get istiocni default -n istio-cni >/dev/null
   oc_get istio default -n istio-system >/dev/null
@@ -76,6 +90,7 @@ else
 
   wait_cr_condition "istiocnis.sailoperator.io/default" istio-cni Ready 180
   wait_cr_condition "istios.sailoperator.io/default" istio-system Ready 180
+  wait_cr_condition "ztunnels.sailoperator.io/default" ztunnel Ready 180
 
   provider_service="$(
     oc_get istio default -n istio-system \
@@ -101,6 +116,8 @@ wait_resource_exists "telemetries.telemetry.istio.io/mesh-observability" istio-s
 
 begin_apply_step "6. Istio monitoring"
 oc_apply -f "${ROOT}/manifests/05-istiod-servicemonitor.yaml"
+oc_apply -f "${ROOT}/manifests/06-ztunnel-podmonitor.yaml"
+wait_resource_exists "podmonitors.monitoring.coreos.com/istio-ztunnel-monitor" ztunnel 120
 wait_resource_exists "servicemonitors.monitoring.coreos.com/istiod-monitor" istio-system 120
 for f in "${ROOT}"/rendered/06-istio-proxies-podmonitor-*.yaml; do
   oc_apply -f "${f}"
@@ -177,6 +194,8 @@ fi
 
 begin_apply_step "17. Bookinfo application and ingress gateway"
 if [[ "${DEPLOY_BOOKINFO:-1}" == "1" ]]; then
+  old_route_host="$(oc_get route istio-ingressgateway -n bookinfo -o jsonpath='{.spec.host}' 2>/dev/null || true)"
+  oc label namespace bookinfo istio-discovery=enabled --overwrite
   oc_apply -n bookinfo -f "${ROOT}/bookinfo/00-bookinfo.yaml"
   for deployment in details-v1 ratings-v1 reviews-v1 reviews-v2 reviews-v3 productpage-v1; do
     wait_deployment_available bookinfo "${deployment}" 420
@@ -184,23 +203,58 @@ if [[ "${DEPLOY_BOOKINFO:-1}" == "1" ]]; then
   for service in details ratings reviews productpage; do
     require_service_endpoints bookinfo "${service}" 180
   done
+  oc_apply -n bookinfo -f "${ROOT}/bookinfo/04-ambient-waypoint.yaml"
+  oc_apply -n bookinfo -f "${ROOT}/bookinfo/05-ambient-ingress.yaml"
+  require_ambient_bookinfo_routing bookinfo 420
+
+  # A retained gateway injected before ambient was enabled must be re-injected
+  # with HBONE before its backends are converted.
+  if oc_get deployment istio-ingressgateway -n bookinfo >/dev/null 2>&1; then
+    ingress_pods="$(oc_get pods -n bookinfo -l app.kubernetes.io/component=bookinfo-ingressgateway -o json)"
+    if ! gateway_hbone_enabled_from_json "${ingress_pods}"; then
+      oc rollout restart deployment istio-ingressgateway -n bookinfo
+      wait_deployment_available bookinfo istio-ingressgateway 420
+    fi
+    ingress_pods="$(oc_get pods -n bookinfo -l app.kubernetes.io/component=bookinfo-ingressgateway -o json)"
+    gateway_hbone_enabled_from_json "${ingress_pods}" || {
+      echo 'ERROR: retained ingress does not have HBONE enabled after reinjection.' >&2
+      exit 1
+    }
+    require_service_endpoints bookinfo istio-ingressgateway 180
+  fi
+
+  # Retain the old ingress resources. The old public Route remains in place
+  # until the new Gateway and ambient application path have been checked.
+  AMBIENT_MIGRATION_STARTED=1
+  oc label service productpage -n bookinfo istio.io/ingress-use-waypoint=true --overwrite
+  oc label namespace bookinfo istio-injection- --overwrite
+  oc label namespace bookinfo istio.io/dataplane-mode=ambient istio.io/use-waypoint=waypoint --overwrite
+
   for app in details ratings reviews productpage; do
-    require_selector_pods_container bookinfo "app=${app}" istio-proxy 240
+    pods="$(oc_get pods -n bookinfo -l "app=${app}" -o json)"
+    if jq -e 'any(.items[]?; any((.spec.containers // [])[]; .name == "istio-proxy") or any((.spec.initContainers // [])[]; .name == "istio-proxy"))' <<<"${pods}" >/dev/null; then
+      for deployment in $(oc_get deployments.apps -n bookinfo -l "app=${app}" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); do
+        oc rollout restart deployment "${deployment}" -n bookinfo
+        wait_deployment_available bookinfo "${deployment}" 420
+      done
+    fi
+    require_ambient_pods bookinfo "app=${app}" 240
   done
+  require_bookinfo_hbone 180
 
-  oc_apply -n bookinfo -f "${ROOT}/bookinfo/01-ingress-gateway.yaml"
-  wait_deployment_available bookinfo istio-ingressgateway 420
-  require_service_endpoints bookinfo istio-ingressgateway 180
-
-  # Apply the complete ingress/routing declaration before verifying any one
-  # object. A verification failure must not leave the ingress Service without
-  # its external OpenShift Route.
-  oc_apply -n bookinfo -f "${ROOT}/bookinfo/02-bookinfo-gateway.yaml"
+  ratings_pod="$(oc_get pods -n bookinfo -l app=ratings -o jsonpath='{.items[0].metadata.name}')"
+  gateway_body="$(oc exec -n bookinfo "${ratings_pod}" -c ratings -- \
+    curl -fsS --max-time 20 http://bookinfo-ambient-istio.bookinfo.svc.cluster.local/productpage)"
+  grep -Eq '<title>[^<]+</title>' <<<"${gateway_body}"
+  grep -Eqi 'ISBN|Book Details' <<<"${gateway_body}"
+  grep -Eqi 'Reviews|Book Reviews' <<<"${gateway_body}"
   oc_apply -n bookinfo -f "${ROOT}/bookinfo/03-route.yaml"
-
-  require_istio_bookinfo_routing bookinfo 120
   wait_route_admitted bookinfo istio-ingressgateway 240
-  require_bookinfo_ingress_contract bookinfo
+  new_route_host="$(oc_get route istio-ingressgateway -n bookinfo -o jsonpath='{.spec.host}')"
+  if [[ -n "${old_route_host}" && "${new_route_host}" != "${old_route_host}" ]]; then
+    echo 'ERROR: Bookinfo Route hostname changed during cutover.' >&2
+    exit 1
+  fi
 else
   echo "Skipped explicitly (DEPLOY_BOOKINFO=0)."
 fi

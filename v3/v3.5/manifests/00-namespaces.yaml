@@ -13,13 +13,9 @@ metadata:
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: tempo
-
+  name: ztunnel
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: bookinfo
-  labels:
-    istio-discovery: enabled
-    istio-injection: enabled
+  name: tempo

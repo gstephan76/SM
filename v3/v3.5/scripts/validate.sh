@@ -19,6 +19,7 @@ validate_readiness_compatibility_filters || {
   echo "ERROR: Kubernetes readiness compatibility filter self-test failed." >&2
   exit 1
 }
+bash "${ROOT}/scripts/test-ambient-trace.sh"
 validate_script_api_qualification "${ROOT}" || exit 1
 "${ROOT}/scripts/render.sh"
 
@@ -52,6 +53,11 @@ require_can_i create objectbucketclaims.objectbucket.io -n tempo
 require_can_i create tempostacks.tempo.grafana.com -n tempo
 require_can_i create opentelemetrycollectors.opentelemetry.io -n istio-system
 require_can_i create kialis.kiali.io -n istio-system
+if [[ "${APPLY_MESH_BASE:-0}" == "1" ]]; then
+  require_can_i create istios.sailoperator.io
+  require_can_i create istiocnis.sailoperator.io
+  require_can_i create ztunnels.sailoperator.io
+fi
 if [[ "${ENABLE_MESH_CONSOLE:-1}" == "1" ]]; then
   require_can_i create ossmconsoles.kiali.io -n openshift-operators
   require_can_i get consoleplugins.console.openshift.io
@@ -59,6 +65,35 @@ fi
 require_can_i get routes.route.openshift.io -n openshift-console
 
 if [[ "${DEPLOY_BOOKINFO:-1}" == "1" ]]; then
+  # This bundle only defines the baseline Bookinfo ingress VirtualService.
+  # Unknown traffic or security policies require an explicit migration review.
+  for ns in istio-system bookinfo; do
+    if oc_get namespace "${ns}" >/dev/null 2>&1; then
+      if [[ "${ns}" == bookinfo && -n "$(oc_get namespace bookinfo -o jsonpath='{.metadata.labels.istio\.io/rev}')" ]]; then
+        echo 'ERROR: Bookinfo has an Istio revision label; review its injection and migration policy before proceeding.' >&2
+        exit 1
+      fi
+      for resource in authorizationpolicies.security.istio.io peerauthentications.security.istio.io requestauthentications.security.istio.io envoyfilters.networking.istio.io destinationrules.networking.istio.io sidecars.networking.istio.io wasmplugins.extensions.istio.io; do
+        if api_resource_exists "${resource}"; then
+          existing_policies="$(oc_get "${resource}" -n "${ns}" -o name)"
+          if [[ -n "${existing_policies}" ]]; then
+            echo "ERROR: existing ${resource} in ${ns} require an explicit ambient migration review:" >&2
+            printf '%s\n' "${existing_policies}" >&2
+            exit 1
+          fi
+        fi
+      done
+      existing_virtualservices="$(oc_get virtualservices.networking.istio.io -n "${ns}" -o name)"
+      if [[ "${ns}" == bookinfo ]]; then
+        existing_virtualservices="$(printf '%s\n' "${existing_virtualservices}" | grep -v '^virtualservice.networking.istio.io/bookinfo$' || true)"
+      fi
+      if [[ -n "${existing_virtualservices}" ]]; then
+        echo "ERROR: existing VirtualServices in ${ns} require an explicit ambient migration review:" >&2
+        printf '%s\n' "${existing_virtualservices}" >&2
+        exit 1
+      fi
+    fi
+  done
   require_can_i create deployments.apps -n bookinfo
   require_can_i create services -n bookinfo
   require_can_i create serviceaccounts -n bookinfo
@@ -67,6 +102,11 @@ if [[ "${DEPLOY_BOOKINFO:-1}" == "1" ]]; then
   require_can_i create gateways.networking.istio.io -n bookinfo
   require_can_i create virtualservices.networking.istio.io -n bookinfo
   require_can_i create routes.route.openshift.io -n bookinfo
+  require_can_i create gateways.gateway.networking.k8s.io -n bookinfo
+  require_can_i create httproutes.gateway.networking.k8s.io -n bookinfo
+  require_can_i patch namespaces
+  require_can_i patch deployments.apps -n bookinfo
+  require_can_i patch services -n bookinfo
   api_resource_exists gateways.networking.istio.io || {
     echo "ERROR: Istio Gateway API resource gateways.networking.istio.io is not discoverable." >&2
     exit 1
@@ -84,6 +124,16 @@ fi
 if [[ "${APPLY_MESH_BASE:-0}" != "1" ]]; then
   oc_get istiocni default -n istio-cni >/dev/null
   oc_get istio default -n istio-system >/dev/null
+  [[ "$(oc_get istiocni default -n istio-cni -o jsonpath='{.spec.profile}')" == ambient &&
+     "$(oc_get istio default -n istio-system -o jsonpath='{.spec.profile}')" == ambient &&
+     "$(oc_get istiocni default -n istio-cni -o jsonpath='{.spec.values.global.nativeNftables}')" == true &&
+     "$(oc_get istio default -n istio-system -o jsonpath='{.spec.values.global.nativeNftables}')" == true &&
+     "$(oc_get istio default -n istio-system -o jsonpath='{.spec.values.pilot.trustedZtunnelNamespace}')" == ztunnel &&
+     "$(oc_get istio default -n istio-system -o jsonpath='{.spec.values.pilot.env.ENABLE_INGRESS_WAYPOINT_ROUTING}')" == true ]] || {
+    echo 'ERROR: the preserved mesh does not satisfy the required ambient configuration.' >&2
+    exit 1
+  }
+  oc_get ztunnels.sailoperator.io default -n ztunnel >/dev/null
 
   cni_version="$(oc_get istiocni default -n istio-cni -o jsonpath='{.spec.version}')"
   istio_version="$(oc_get istio default -n istio-system -o jsonpath='{.spec.version}')"
@@ -170,8 +220,8 @@ for f in "${ROOT}"/rendered/*.yaml; do
 done
 
 if [[ "${DEPLOY_BOOKINFO:-1}" == "1" ]]; then
-  for f in "${ROOT}"/bookinfo/*.yaml; do
-    validate_manifest "${f}" bookinfo
+  for f in 00-bookinfo.yaml 03-route.yaml 04-ambient-waypoint.yaml 05-ambient-ingress.yaml; do
+    validate_manifest "${ROOT}/bookinfo/${f}" bookinfo
   done
 fi
 
