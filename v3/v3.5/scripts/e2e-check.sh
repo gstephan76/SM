@@ -183,7 +183,7 @@ start_port_forward() {
 query_thanos_bookinfo_metric() {
   local token="$1"
   local response="$2"
-  local query='sum(istio_requests_total{destination_service_namespace="bookinfo",pod_name=~"waypoint-istio-.*"})'
+  local query='sum(istio_requests_total{destination_service_namespace="bookinfo",reporter="waypoint",pod_name=~"waypoint-.*"})'
   local code value
 
   code="$(curl -q --silent --show-error --insecure --get \

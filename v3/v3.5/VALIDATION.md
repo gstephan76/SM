@@ -34,3 +34,36 @@ for the cutover limitations and manual recovery path.
 
 The prior sidecar acceptance contract is retained in
 [SIDECAR-VALIDATION-HISTORY.md](SIDECAR-VALIDATION-HISTORY.md).
+
+## OpenShift 5.0.1 test, 2026-11-17
+
+The deployment reached the final end-to-end gate after server-side manifest
+validation and comprehensive readiness checks passed. Bookinfo was sidecar-free,
+all application pods were registered with HBONE, both Gateways were programmed,
+and external and in-mesh requests succeeded. The load phase had zero HTTP
+failures in 200 requests. The gate nevertheless failed: the first forced trace
+contained the ingress and all four Bookinfo waypoint span names, but its span
+attributes were redacted, so it did not satisfy the required attribute-based
+full-chain proof. The remaining end-to-end gates did not run.
+
+The waypoint's effective Envoy configuration contains the destination tags.
+Tempo query RBAC receives those spans without `k8s.namespace.name` on their
+resource and returns empty span attributes. Two synthetic spans without a
+namespace, sent through the collector and directly through the Tempo gateway,
+were both indexed but returned without their attributes. A third synthetic span
+with resource namespace `bookinfo` returned its attribute to the same Kiali
+service account, which has pod-read permission in that namespace. This confirms
+the namespace association issue without disabling query RBAC. The choice of how
+to supply authoritative namespace metadata remains open.
+
+An independent metrics check used the actual `reporter="waypoint"` series:
+40 successful Bookinfo requests increased the counter from 788 to 932. The
+script's waypoint pod selector was corrected to match the deployed pod name;
+the full end-to-end gate has not been rerun with that correction.
+
+The initial ZTunnel rollout also exposed a missing `istio-discovery=enabled`
+namespace label. Applying the label caused Istiod to create the trust ConfigMap
+and all ZTunnel pods became ready; the namespace manifest now includes it.
+NooBaa used its PV-pool fallback after the cloud credential request failed, and
+the backing store, bucket class, OBC and PVC reached their readiness gates. This
+observation does not establish Red Hat support for ODF 4.22 on OCP 5.0.
