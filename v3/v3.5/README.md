@@ -5,8 +5,8 @@ with ambient Bookinfo workloads. The previous OpenShift 4.22 sidecar runbook is
 retained as [SIDECAR-HISTORY.md](SIDECAR-HISTORY.md); it does not describe this
 deployment.
 
-**The ambient deployment is not yet qualified on the target cluster.** No mesh,
-operator, storage, or application resources have been deployed by this port.
+**The fresh-cluster data path passed live acceptance; sidecar migration and ODF
+support remain unverified.** See [VALIDATION.md](VALIDATION.md) for the results.
 
 The intended data path is:
 
@@ -22,6 +22,9 @@ The control plane and CNI use the ambient profile and native nftables for
 RHCOS 10. The ingress is opted into the service waypoint; without that opt-in,
 ingress traffic can bypass waypoint telemetry and L7 policy. Kiali is configured
 to query traces by waypoint name.
+The collector associates incoming trace connections with pods and adds the
+pod namespace for Tempo query authorization. Its service account can read pod
+objects, including their specifications and metadata, across the cluster.
 
 The target cluster currently offers OSSM 3.5.0, Kiali 2.33.1, OpenTelemetry
 0.158, Tempo 0.22 and ODF 4.22.7 in its operator catalog. Red Hat lists OSSM
@@ -42,8 +45,8 @@ The required final acceptance test correlates forced W3C trace IDs with Tempo,
 requires gateway and waypoint spans, and checks the waypoint destination tags
 for productpage, details, reviews, and at least one ratings hop. It also checks
 an unsampled negative control and a before/after waypoint request metric in
-Thanos. These checks are implemented but have not been run against the target
-stack; source definitions and synthetic fixtures do not establish live behavior.
+Thanos. See [VALIDATION.md](VALIDATION.md) for the results on the target stack;
+source definitions and synthetic fixtures alone do not establish live behavior.
 
 Local checks that do not contact or modify the cluster:
 

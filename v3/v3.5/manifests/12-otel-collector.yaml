@@ -31,6 +31,14 @@ spec:
         check_interval: 1s
         limit_mib: 400
         spike_limit_mib: 80
+      k8sattributes:
+        auth_type: serviceAccount
+        wait_for_metadata: true
+        extract:
+          metadata: [k8s.namespace.name]
+        pod_association:
+        - sources:
+          - from: connection
       batch:
         timeout: 5s
     exporters:
@@ -48,5 +56,5 @@ spec:
       pipelines:
         traces:
           receivers: [otlp]
-          processors: [memory_limiter, batch]
+          processors: [memory_limiter, k8sattributes, batch]
           exporters: [otlp_grpc/tempo]
