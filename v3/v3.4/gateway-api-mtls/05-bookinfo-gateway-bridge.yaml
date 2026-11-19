@@ -1,0 +1,12 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: bookinfo-gateway-bridge
+  namespace: bookinfo
+spec:
+  host: bookinfo.apps.cluster-l6fjm.dyn.redhatworkshops.io
+  to:
+    kind: Service
+    name: bookinfo-mesh-gateway-istio
+  port:
+    targetPort: 80

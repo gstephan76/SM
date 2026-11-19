@@ -36,6 +36,17 @@ for ns in istio-system istio-cni ztunnel tempo bookinfo; do
   fi
 done
 
+# A fresh cluster needs the Operators and their CRDs before validation.
+# Existing compatible subscriptions are kept unchanged.
+case "${BOOTSTRAP_OPERATORS:-1}" in
+  1)
+    begin_apply_step "0. Mesh and observability Operators"
+    "${ROOT}/scripts/bootstrap-operators.sh" --apply
+    ;;
+  0) echo 'Operator bootstrap explicitly disabled (BOOTSTRAP_OPERATORS=0).' ;;
+  *) echo 'ERROR: BOOTSTRAP_OPERATORS must be 0 or 1.' >&2; exit 2 ;;
+esac
+
 # ODF is intentionally opt-in: the ordinary deploy path must not mutate
 # existing ODF operator subscriptions, persistent volumes, or StorageClusters.
 if [[ "${BOOTSTRAP_MCG:-0}" == "1" ]]; then
@@ -43,6 +54,7 @@ if [[ "${BOOTSTRAP_MCG:-0}" == "1" ]]; then
   "${ROOT}/storage/odf/bootstrap-mcg.sh"
 fi
 
+begin_apply_step "1. Validate prerequisites and manifests"
 "${ROOT}/scripts/validate.sh"
 
 begin_apply_step "2. Namespaces"

@@ -148,5 +148,6 @@ fi
 
 ((missing == 0)) || {
   echo "ERROR: OSSM 3.5 observability prerequisites are incomplete." >&2
+  echo "For a fresh cluster, run scripts/bootstrap-operators.sh --apply or use apply.sh (BOOTSTRAP_OPERATORS=1)." >&2
   exit 1
 }

@@ -54,6 +54,15 @@ E2E_MIN_METRIC_DELTA=100
 
 `RUN_E2E=0` is only for an intentionally partial deployment that will be validated separately.
 
+For iterative data-path testing after a deployment has already passed the full
+readiness checks, `./scripts/e2e-check.sh --fast` skips both exhaustive
+`postcheck.sh` snapshots and starts the E2E sequence immediately. The fast mode
+does not skip the E2E traffic, W3C trace, Tempo, OTel, or UWM/Thanos assertions,
+and it retains the required Tempo authorization checks. It is a debugging and
+rerun convenience, not a replacement for the full deployment acceptance path;
+plain `e2e-check.sh` and `apply.sh` retain exhaustive pre/post readiness
+validation.
+
 ## Console integrations
 
 Two independent console plugins are expected:

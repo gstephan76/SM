@@ -52,24 +52,47 @@ Local checks that do not contact or modify the cluster:
 
 ```bash
 bash scripts/test-ambient-trace.sh
+python3 tests/test_fresh_prereqs.py
 bash -n scripts/*.sh storage/odf/*.sh
 ```
 
 The deployment requires the OSSM, Kiali, OpenTelemetry, Tempo and Cluster
 Observability Operators, their CRDs, working user workload monitoring, and a
-healthy NooBaa OBC provisioner. `scripts/check-prereqs.sh` checks those
-requirements, and `scripts/validate.sh` performs server-side dry runs when the
-target namespaces exist. `APPLY_MESH_BASE=0` preserves a qualifying ambient
-mesh; `APPLY_MESH_BASE=1` intentionally reconciles the mesh base. An existing
+healthy NooBaa OBC provisioner. Initialize or preserve the tenant configuration
+with `./scripts/init-env.sh` and review the ODF compatibility caveat above.
+
+On a fresh cluster with healthy ODF/NooBaa already installed (including ODF
+running on OpenShift Virtualization), install the missing Operators and deploy:
+
+```bash
+./scripts/bootstrap-operators.sh --apply
+APPLY_MESH_BASE=1 ./scripts/validate.sh
+APPLY_MESH_BASE=1 ./scripts/apply.sh
+```
+
+Alternatively, `apply.sh` runs the Operator bootstrap automatically before
+validation. `validate.sh` and `check-prereqs.sh` are read-only: they report
+missing Operators until the bootstrap has completed. Set
+`BOOTSTRAP_OPERATORS=0` to disable automatic Operator installation; an existing
+Subscription is retained, and an unsupported version, conflicting scope or
+ambiguous ownership causes the bootstrap to stop. The Red Hat catalog must
+provide the expected OSSM 3.5, Kiali 2.33, OpenTelemetry 0.152 or 0.158, Tempo
+0.22 and Cluster Observability 1.x versions. Operator installation waits up to
+`OPERATOR_TIMEOUT_SECONDS` per Operator (default 1200 seconds).
+
+The storage preflight checks the existing NooBaa OBC StorageClass, bucket class,
+Ready gateway and PV-backed store, and all configured data PVCs using the actual
+backing StorageClass. It does not require `gp3-csi` or a particular
+StorageCluster name. `apply.sh` provisions the Tempo ObjectBucketClaim and
+waits for it to become Bound; readiness checks alone do not establish that a
+bucket can be provisioned. Existing storage is never reconfigured. Set
+`BOOTSTRAP_MCG=1` only to opt into the AWS-specific standalone MCG bootstrap;
+it uses `gp3-csi`, reuses healthy existing storage on either platform and
+refuses to replace an incompatible existing installation.
+
+`APPLY_MESH_BASE=0` preserves a qualifying ambient mesh;
+`APPLY_MESH_BASE=1` intentionally reconciles the mesh base. An existing
 sidecar control plane requires intentional reconciliation before migration.
-After reviewing the ODF compatibility caveat and installing the required
-operators, initialize or preserve the tenant configuration with
-`./scripts/init-env.sh`. For a healthy existing NooBaa installation, run
-`./scripts/check-prereqs.sh`, then `APPLY_MESH_BASE=1 ./scripts/validate.sh`
-and `APPLY_MESH_BASE=1 ./scripts/apply.sh` for a fresh mesh or an intentionally
-reconciled sidecar mesh. Set `BOOTSTRAP_MCG=1` only if the AWS-specific ODF
-bootstrap is explicitly intended. Existing healthy ambient meshes can instead
-use the default `APPLY_MESH_BASE=0`.
 
 Keep `.env`, bucket credentials, rendered secrets and service-account tokens
 out of version control. Preserve the Tempo tenant UUID across reruns.

@@ -31,26 +31,38 @@ echo 'NOTE: ODF 4.22 on OCP 5.0 requires support qualification for this environm
 
 # Preserve an already initialized gateway and its bound objects.
 if "${ROOT}/storage/odf/check-mcg.sh" --quick >/dev/null 2>&1; then
-  echo 'OK   existing standalone MCG is healthy; nothing to install.'
+  echo 'OK   existing NooBaa storage is healthy; nothing to install.'
   exit 0
 fi
 
-# The deployment manifest is explicit about its expected EBS class. An AWS
-# EBS-backed class is not interchangeable with an OBC StorageClass.
-if ! oc get storageclass gp3-csi >/dev/null 2>&1; then
-  echo 'ERROR: StorageClass gp3-csi unavailable. This AWS-specific manifest needs review.' >&2
-  exit 1
-fi
-
-# Do not override an existing incompatible cluster-wide storage installation.
-existing="$(oc -n "${ns}" get storageclusters.ocs.openshift.io ocs-storagecluster -o json 2>/dev/null || true)"
-if [[ -n "${existing}" ]]; then
-  if ! jq -e '.spec.multiCloudGateway.reconcileStrategy == "standalone" and
-              .spec.multiCloudGateway.dbStorageClassName == "gp3-csi"' <<<"${existing}" >/dev/null; then
-    echo 'ERROR: existing openshift-storage/ocs-storagecluster differs from the standalone gp3-csi contract.' >&2
-    echo 'Refusing to modify an existing storage system or its data.' >&2
-    exit 1
+# Check all existing storage owners before considering the AWS-only bootstrap.
+# An unhealthy external ODF installation must never be replaced or modified.
+existing=""
+for crd in storageclusters.ocs.openshift.io noobaas.noobaa.io; do
+  crd_name="$(oc get crd "${crd}" --ignore-not-found -o name)" || {
+    echo "ERROR: cannot inspect ${crd}; refusing storage bootstrap." >&2; exit 1;
+  }
+  [[ -n "${crd_name}" ]] || continue
+  objects="$(oc -n "${ns}" get "${crd}" -o json)" || {
+    echo "ERROR: cannot inspect existing ${crd}; refusing storage bootstrap." >&2; exit 1;
+  }
+  if [[ "${crd}" == storageclusters.ocs.openshift.io ]]; then
+    if ! jq -e '(.items | length) <= 1 and all(.items[];
+        .metadata.name == "ocs-storagecluster" and
+        .spec.multiCloudGateway.reconcileStrategy == "standalone" and
+        .spec.multiCloudGateway.dbStorageClassName == "gp3-csi")' <<<"${objects}" >/dev/null; then
+      echo 'ERROR: existing storage is not the AWS standalone MCG installation; refusing changes.' >&2; exit 1
+    fi
+    existing="$(jq -c '.items[0] // empty' <<<"${objects}")"
+  elif [[ -z "${existing}" ]] && ! jq -e '.items | length == 0' <<<"${objects}" >/dev/null; then
+    echo 'ERROR: an existing NooBaa has no matching standalone StorageCluster; refusing changes.' >&2; exit 1
   fi
+done
+# The bootstrap manifest is explicitly AWS-specific. Existing healthy ODF on
+# any platform was already accepted above and never reaches this step.
+if ! oc get storageclass gp3-csi >/dev/null 2>&1; then
+  echo 'ERROR: standalone MCG bootstrap requires AWS StorageClass gp3-csi; configure ODF/NooBaa for this platform first.' >&2
+  exit 1
 fi
 
 oc create namespace "${ns}" --dry-run=client -o yaml | oc apply -f -

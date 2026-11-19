@@ -173,6 +173,19 @@ The script executes the numbered deployment contract. Operator-managed CRs are g
 
 `RUN_E2E=1` is the default and `apply.sh` runs `scripts/e2e-check.sh` only after the complete readiness postcheck. When Bookinfo is enabled the route URL is discovered automatically.
 
+For iterative E2E debugging on a deployment that has already passed the normal
+readiness validation, use:
+
+```bash
+./scripts/e2e-check.sh --fast
+```
+
+`--fast` jumps directly to the E2E data-path checks by skipping the exhaustive
+`postcheck.sh` snapshot both before and after the E2E sequence. It still performs
+the direct E2E assertions and the Tempo writer/reader authorization checks needed
+by those tests. Normal `apply.sh` and a plain `e2e-check.sh` keep the full
+acceptance behavior.
+
 The test must prove **this run**, not merely observe stale telemetry. It verifies:
 
 1. the external Bookinfo `/productpage` response and page content;

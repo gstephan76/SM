@@ -6,6 +6,37 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "${ROOT}/scripts/lib-common.sh"
 load_stack_env "${ROOT}"
 
+FAST=0
+
+usage() {
+  cat <<'EOF'
+Usage: ./scripts/e2e-check.sh [--fast]
+
+  --fast    Run the E2E data-path tests immediately, skipping the exhaustive
+            pre- and post-E2E resource readiness snapshots.
+  -h, --help
+            Show this help.
+EOF
+}
+
+while (( $# > 0 )); do
+  case "$1" in
+    --fast)
+      FAST=1
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "ERROR: unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
 for cmd in curl jq; do
   command -v "${cmd}" >/dev/null 2>&1 || {
     echo "ERROR: ${cmd} is required for the final E2E check." >&2
@@ -54,10 +85,19 @@ echo "============================================================"
 echo " Final OSSM 3.4 observability + Bookinfo E2E"
 echo "============================================================"
 echo "Bookinfo URL: ${TRACE_TEST_URL}"
+if (( FAST )); then
+  echo "Mode: fast E2E-only (exhaustive readiness snapshots skipped)"
+else
+  echo "Mode: full acceptance"
+fi
 
 # Fail early on incomplete installation/readiness. This also verifies every
 # operator-managed CR and all Bookinfo workloads before generating traffic.
-"${ROOT}/scripts/postcheck.sh"
+if (( FAST )); then
+  echo "FAST  skipping pre-E2E exhaustive postcheck"
+else
+  "${ROOT}/scripts/postcheck.sh"
+fi
 
 require_tempo_sar \
   "otel-collector" \
@@ -440,7 +480,15 @@ awk -v d="${metric_delta}" -v minimum="${E2E_MIN_METRIC_DELTA}" 'BEGIN { exit !(
 echo "OK   UWM/Thanos Bookinfo metrics advanced: before=${metric_before} after=${metric_after} delta=${metric_delta}"
 
 echo "== E2E 8/8: final resource health snapshot =="
-"${ROOT}/scripts/postcheck.sh"
+if (( FAST )); then
+  echo "FAST  skipping final exhaustive postcheck"
+else
+  "${ROOT}/scripts/postcheck.sh"
+fi
 
 echo
-echo "E2E PASS: Bookinfo application, ingress routing, sidecar propagation, forced and random tracing, OTel -> Tempo, secured Tempo query, and UWM/Thanos metrics are all validated."
+if (( FAST )); then
+  echo "E2E PASS (fast): Bookinfo application, ingress routing, forced and random tracing, OTel -> Tempo, secured Tempo query, and UWM/Thanos metrics are validated; exhaustive resource readiness snapshots were intentionally skipped."
+else
+  echo "E2E PASS: Bookinfo application, ingress routing, sidecar propagation, forced and random tracing, OTel -> Tempo, secured Tempo query, and UWM/Thanos metrics are all validated."
+fi

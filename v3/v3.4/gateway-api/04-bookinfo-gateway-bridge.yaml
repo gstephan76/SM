@@ -1,0 +1,12 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: bookinfo-gateway-bridge
+  namespace: openshift-ingress
+spec:
+  host: bookinfo.apps.cluster-l6fjm.dyn.redhatworkshops.io
+  to:
+    kind: Service
+    name: bookinfo-gateway-openshift-default
+  port:
+    targetPort: 80
